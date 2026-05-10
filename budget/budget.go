@@ -41,7 +41,7 @@ func (cfg Config) withDefaults() Config {
 // that respects the budget config. Items beyond the limit are counted but not
 // included in the response. The hintTemplate is a format string that receives
 // the total count as its first %d argument (e.g., "%d tasks found. Use
-// volon_task_get for details.").
+// task_get for details.").
 //
 // If hintTemplate is empty and the response is truncated, a generic hint is
 // used.

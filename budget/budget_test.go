@@ -58,7 +58,7 @@ func TestApply_OverLimit_Truncated(t *testing.T) {
 	for i := range items {
 		items[i] = i
 	}
-	env := Apply(items, Config{Limit: 10}, "%d tasks found. Use volon_task_get for details.")
+	env := Apply(items, Config{Limit: 10}, "%d tasks found. Use task_get for details.")
 	if env.Count != 10 {
 		t.Errorf("Count = %d, want 10", env.Count)
 	}
@@ -68,7 +68,7 @@ func TestApply_OverLimit_Truncated(t *testing.T) {
 	if !env.Truncated {
 		t.Error("Truncated should be true when over limit")
 	}
-	want := "47 tasks found. Use volon_task_get for details."
+	want := "47 tasks found. Use task_get for details."
 	if env.Hint != want {
 		t.Errorf("Hint = %q, want %q", env.Hint, want)
 	}
