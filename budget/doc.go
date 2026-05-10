@@ -1,9 +1,14 @@
 // Package budget provides MCP response budget enforcement utilities.
 //
-// All Fragments Engine MCP servers (Engine, Hadron, Cortex) use this package
-// to ensure list responses stay within a ~2000-token budget (~8000 bytes of
-// serialized JSON). See ADR-006 for the full contract.
+// MCP tool servers commonly need to keep list-style responses within a
+// model-context-friendly token budget. This package wraps results in an
+// [Envelope] with pagination and truncation metadata, and provides small
+// helpers for extracting paging arguments from untyped MCP parameter maps
+// and rendering MCP tool-response JSON.
 //
-// This package is dependency-free (stdlib only) so it can be imported by any
-// MCP implementation without pulling in framework dependencies.
+// The defaults target ~2000 tokens (~8000 bytes of serialized JSON), a
+// reasonable starting point for tool responses consumed inline by an LLM.
+// Callers override the limits via [Config].
+//
+// The package is dependency-free (stdlib only).
 package budget

@@ -1,27 +1,27 @@
-# MCP Helpers (go-mcp)
+# go-mcp
 
-Shared Go utilities for building Model Context Protocol (MCP) tool servers. The
-module currently exposes a single subpackage, `budget`, which implements the
-response-size contract used by the Fragments Engine MCP servers (Engine,
-Hadron, Cortex) to keep list responses within a ~2000-token budget. See
-`budget/doc.go` for the package godoc, which references ADR-006 as the
-canonical contract.
+Shared Go utilities for building [Model Context Protocol](https://modelcontextprotocol.io/)
+tool servers. The module currently exposes a single subpackage, `budget`,
+which wraps list-style tool responses with pagination and truncation
+metadata so they fit a model-context-friendly token budget.
 
-This library is intentionally dependency-free (stdlib only) so any MCP server
-can import it without pulling in framework dependencies.
+The library is intentionally dependency-free (stdlib only) so any MCP server
+can import it without pulling in transitive dependencies.
 
 ## Status
 
-Beta. The `budget` package has a stable API surface backed by unit tests, but
-the module is single-subpackage and has no CHANGELOG. See `AUDIT_RESULTS.md`.
+Pre-1.0 (`v0.1.x`). The `budget` package has a stable API surface backed by
+unit tests, and is the only package shipped today. See
+[`CHANGELOG.md`](./CHANGELOG.md) for release notes and
+[pkg.go.dev](https://pkg.go.dev/github.com/hollis-labs/go-mcp/budget) for godoc.
 
 ## Install
 
 ```bash
-go get github.com/hollis-labs/mcp-helpers/budget
+go get github.com/hollis-labs/go-mcp/budget
 ```
 
-## Usage
+## Quickstart
 
 Apply the budget envelope to a list of items inside an MCP tool handler:
 
@@ -31,7 +31,7 @@ package main
 import (
     "fmt"
 
-    "github.com/hollis-labs/mcp-helpers/budget"
+    "github.com/hollis-labs/go-mcp/budget"
 )
 
 type Task struct {
@@ -48,7 +48,7 @@ func listTasks(params map[string]any, allTasks []Task) string {
     env := budget.Apply(
         allTasks,
         budget.Config{Limit: limit},
-        "%d tasks found. Use volon_task_get for details.",
+        "%d tasks found. Use task_get for details.",
     )
 
     // Serialize to a JSON string suitable for an MCP tool response.
@@ -64,9 +64,11 @@ func main() {
 For error responses, use `budget.ToolError(code, message)` to produce a
 consistent JSON error object.
 
-## API Overview
+A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 
-All public API lives in `github.com/hollis-labs/mcp-helpers/budget`:
+## API overview
+
+All public API lives in `github.com/hollis-labs/go-mcp/budget`:
 
 - `Envelope` — response wrapper with `Items`, `Count`, `Total`, `Truncated`,
   and `Hint` fields (`budget/envelope.go`).
@@ -89,33 +91,30 @@ All public API lives in `github.com/hollis-labs/mcp-helpers/budget`:
 - Constants: `DefaultLimit` (10), `MaxLimit` (25), `DefaultMaxTokens` (2000),
   `DefaultMaxBytes` (8000) (`budget/budget.go`).
 
-## Architecture Notes
+## Notes
 
-- The module has exactly one subpackage (`budget/`). The `go.mod` declares no
-  top-level package, so consumers import `github.com/hollis-labs/mcp-helpers/budget`.
-- `budget.Config.MaxBytes` and `budget.Config.MaxTokens` are accepted by
-  `Config.withDefaults` but are **not** currently enforced by `Apply` — only
-  `Limit` affects truncation. If byte/token enforcement is required, it must
-  be added by the caller or a future revision.
-- The package godoc in `budget/envelope.go` points to "ADR-006" as the
-  authoritative contract; that ADR is not bundled with this library.
+- The module has exactly one subpackage (`budget/`); consumers import
+  `github.com/hollis-labs/go-mcp/budget`.
+- `Config.MaxBytes` and `Config.MaxTokens` are accepted by `Apply` but are
+  **not** currently enforced — only `Limit` drives truncation. Either
+  tightening enforcement or removing the fields will be a deliberate choice
+  in a future minor release; see `CHANGELOG.md` for the open follow-up.
 
 ## Dependencies
 
-- **Framework-internal:** none.
-- **External:** none. The package only imports `encoding/json` and `fmt` from
-  the Go standard library.
+None. The package only imports `encoding/json` and `fmt` from the Go
+standard library.
 
 ## Testing
 
 ```bash
-go test ./...
+go test -race ./...
 ```
 
 Tests live alongside the source under `budget/`:
-`budget_test.go`, `helpers_test.go`, `tokens_test.go`. They are pure unit
-tests with no external dependencies, fixtures, or environment variables.
+`budget_test.go`, `helpers_test.go`, `tokens_test.go`, plus
+`example_test.go` for godoc-rendered examples.
 
 ## License
 
-MIT License. See `LICENSE`.
+MIT License — see [`LICENSE`](./LICENSE). © Hollis Labs.
