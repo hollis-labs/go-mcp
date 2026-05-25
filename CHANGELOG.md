@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.0 — 2026-05-24
+
+### Added
+
+- `server` package — reusable stdio MCP server core extracted from Cerberus.
+  - `Tool` / `ToolHandler` registration API.
+  - `NewServer(name, version)` stdio server with built-in JSON-RPC loop.
+  - Strict schema helpers: `EmptyObjectSchema`, `ObjectSchema`.
+  - Stable `tools/list` ordering for deterministic agent discovery.
+  - In-flight request tracking and `notifications/cancelled` handling for
+    request-scoped tool cancellation.
+- `transport/http` package — reusable HTTP MCP transport over `server.Server`.
+  - `http.Handler` wrapper for `initialize`, `tools/list`, and `tools/call`.
+  - `202 Accepted` handling for notifications.
+  - Request-context cancellation and optional `Origin` allowlist checks.
+
+### Changed
+
+- `README.md` now documents `budget`, `server`, and `transport/http` instead
+  of describing `go-mcp` as budget-only.
+
 ## v0.1.0 — 2026-05-10
 
 First public release.

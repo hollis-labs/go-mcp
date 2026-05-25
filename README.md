@@ -1,24 +1,31 @@
 # go-mcp
 
 Shared Go utilities for building [Model Context Protocol](https://modelcontextprotocol.io/)
-tool servers. The module currently exposes a single subpackage, `budget`,
-which wraps list-style tool responses with pagination and truncation
-metadata so they fit a model-context-friendly token budget.
+tool servers. The module currently exposes:
+
+- `budget` — list-style response envelopes and truncation helpers
+- `server` — a stdio MCP server core with tool registration, strict tool
+  schemas, deterministic `tools/list` ordering, and request cancellation for
+  `notifications/cancelled`
+- `transport/http` — HTTP handler for exposing an MCP server over POST-based
+  MCP transport with request-context cancellation and origin checks
 
 The library is intentionally dependency-free (stdlib only) so any MCP server
 can import it without pulling in transitive dependencies.
 
 ## Status
 
-Pre-1.0 (`v0.1.x`). The `budget` package has a stable API surface backed by
-unit tests, and is the only package shipped today. See
-[`CHANGELOG.md`](./CHANGELOG.md) for release notes and
-[pkg.go.dev](https://pkg.go.dev/github.com/hollis-labs/go-mcp/budget) for godoc.
+Pre-1.0 (`v0.2.x`). The `budget`, `server`, and `transport/http` packages are
+tested and usable, but the module is still being shaped around real app
+adoption. See
+[`CHANGELOG.md`](./CHANGELOG.md) for release notes.
 
 ## Install
 
 ```bash
 go get github.com/hollis-labs/go-mcp/budget
+go get github.com/hollis-labs/go-mcp/server
+go get github.com/hollis-labs/go-mcp/transport/http
 ```
 
 ## Quickstart
@@ -66,9 +73,9 @@ consistent JSON error object.
 
 A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 
-## API overview
+## Packages
 
-All public API lives in `github.com/hollis-labs/go-mcp/budget`:
+`github.com/hollis-labs/go-mcp/budget`
 
 - `Envelope` — response wrapper with `Items`, `Count`, `Total`, `Truncated`,
   and `Hint` fields (`budget/envelope.go`).
@@ -91,10 +98,25 @@ All public API lives in `github.com/hollis-labs/go-mcp/budget`:
 - Constants: `DefaultLimit` (10), `MaxLimit` (25), `DefaultMaxTokens` (2000),
   `DefaultMaxBytes` (8000) (`budget/budget.go`).
 
+`github.com/hollis-labs/go-mcp/server`
+
+- `Tool` and `ToolHandler` — MCP tool registration primitives
+- `NewServer(name, version)` — stdio MCP server with built-in JSON-RPC loop
+- `RegisterTool` — add tools to the server registry
+- `EmptyObjectSchema` and `ObjectSchema` — strict JSON object schema helpers
+- cancellation support for `notifications/cancelled`
+- deterministic `tools/list` ordering for stable agent discovery
+
+`github.com/hollis-labs/go-mcp/transport/http`
+
+- `NewHandler(server, opts)` — wrap a `server.Server` as an `http.Handler`
+- `HandlerOptions.AllowedOrigins` — optional browser-origin allowlist
+- POST JSON-RPC handling for `initialize`, `tools/list`, and `tools/call`
+- `202 Accepted` handling for notifications
+- request-context cancellation for in-flight tool calls
+
 ## Notes
 
-- The module has exactly one subpackage (`budget/`); consumers import
-  `github.com/hollis-labs/go-mcp/budget`.
 - `Config.MaxBytes` and `Config.MaxTokens` are accepted by `Apply` but are
   **not** currently enforced — only `Limit` drives truncation. Either
   tightening enforcement or removing the fields will be a deliberate choice
