@@ -3,6 +3,7 @@
 Shared Go utilities for building [Model Context Protocol](https://modelcontextprotocol.io/)
 tool servers. The module currently exposes:
 
+- `staleness` — observation-only comparison of verified running and replacement images
 - `budget` — list-style response envelopes and truncation helpers
 - `server` — a stdio MCP server core with tool registration, strict tool
   schemas, deterministic `tools/list` ordering, and request cancellation for
@@ -115,6 +116,35 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 - `202 Accepted` handling for notifications
 - request-context cancellation for in-flight tool calls
 
+### Executable staleness
+
+`github.com/hollis-labs/go-mcp/staleness` compares identities acquired by the
+product against the launch selector supplied by its owner. `Compare` requires
+compatible schemes, products and platforms; missing evidence yields `unknown`.
+`different` means different replacement content, including a rollback. It does
+not establish version order or grant permission to replace a process.
+
+`Observe(ctx, running, target, inspect)` supports absolute Unix selectors,
+including symlinks. It copies a regular executable of at most 256 MiB into a
+private temporary directory, asks the product's `Inspector` to verify that
+snapshot without executing it, then rechecks the source bytes and selector.
+Inode and timestamp changes detect races; they never prove content equality.
+The snapshot is removed before return. Callers should serialize inspections to
+bound temporary disk use. Inspectors run synchronously and should honor context
+cancellation; a blocking native verifier cannot be interrupted by this package.
+
+Identity acquisition is deliberately outside this dependency-free library.
+A version string, commit, pathname, or first hash of a mutable executable path
+is not verified running identity. The product must bind its retained identity
+to the executing image and document which content its digest scheme covers.
+PATH/relative selectors require owner-side resolution evidence that this first
+implementation does not reconstruct. Unsupported selectors and verification
+failures remain `unknown`; raw verifier errors are not published.
+
+An observation is point-in-time evidence. It neither reserves a future exec nor
+proves that OS policy will permit one. No exit, signal, retry, admission or drain
+behavior is included.
+
 ## Notes
 
 - `Config.MaxBytes` and `Config.MaxTokens` are accepted by `Apply` but are
@@ -124,8 +154,7 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 
 ## Dependencies
 
-None. The package only imports `encoding/json` and `fmt` from the Go
-standard library.
+None. All packages use only the Go standard library.
 
 ## Testing
 
