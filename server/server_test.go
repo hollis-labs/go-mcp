@@ -659,3 +659,34 @@ func TestRegisterToolTitleAndOutputSchemaPassThrough(t *testing.T) {
 		t.Fatal("ToolDefinition.OutputSchema not set")
 	}
 }
+
+// TestRemoveToolsIsSymmetricWithRegisterTool covers RemoveTools: a removed
+// tool disappears from both the wire (ListTools) and go-mcp's own
+// bookkeeping (ToolDefinitions, CallTool), not just one or the other.
+func TestRemoveToolsIsSymmetricWithRegisterTool(t *testing.T) {
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{Name: "keep", Description: "keep", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) { return "kept", nil },
+	})
+	srv.RegisterTool(Tool{Name: "drop", Description: "drop", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) { return "dropped", nil },
+	})
+
+	srv.RemoveTools("drop", "never-registered")
+
+	if defs := srv.ToolDefinitions(); len(defs) != 1 || defs[0].Name != "keep" {
+		t.Fatalf("ToolDefinitions after RemoveTools = %#v, want only \"keep\"", defs)
+	}
+	if _, err := srv.CallTool(context.Background(), "drop", nil); !errors.Is(err, ErrUnknownTool) {
+		t.Fatalf("CallTool(\"drop\") error = %v, want ErrUnknownTool", err)
+	}
+
+	cs := connect(t, srv, nil)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(res.Tools) != 1 || res.Tools[0].Name != "keep" {
+		t.Fatalf("wire ListTools after RemoveTools = %#v, want only \"keep\"", res.Tools)
+	}
+}

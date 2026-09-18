@@ -284,6 +284,22 @@ func (s *Server) ToolDefinitions() []ToolDefinition {
 	return defs
 }
 
+// RemoveTools removes tools with the given names, symmetric with
+// RegisterTool. It is not an error to remove a name that isn't registered.
+// Removing a name that was never registered through RegisterTool (for
+// example, one added directly via SDKServer().AddTool) only affects the
+// wire-visible tool set; it leaves go-mcp's own bookkeeping untouched, since
+// there is nothing there to remove.
+func (s *Server) RemoveTools(names ...string) {
+	s.mu.Lock()
+	for _, name := range names {
+		delete(s.defs, name)
+		delete(s.handlers, name)
+	}
+	s.mu.Unlock()
+	s.sdk.RemoveTools(names...)
+}
+
 // CallTool invokes a registered tool's handler directly, in-process,
 // bypassing the MCP protocol layer, and returns its raw result value
 // unconverted -- a string as a string, anything else as the Go value the

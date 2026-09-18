@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.4.1 — 2026-09-18
+
+### Added
+
+- `server` — `Server.RemoveTools(names ...string)`, symmetric with
+  `RegisterTool`. Needed for a caller (Hadron's dynamic per-session-derived
+  workflow tools, the first real consumer) to unmount a previously
+  registered tool without leaving go-mcp's own `defs`/`handlers`
+  bookkeeping stale -- `SDKServer().RemoveTools()` alone would desync
+  `ToolDefinitions()`/`CallTool()` from the wire-visible set.
+
 ## v0.4.0 — 2026-09-18
 
 Per `project/atlas/knowledge/mcp-acp-shared-contract-and-adoption-notes`'s
