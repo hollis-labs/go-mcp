@@ -1,0 +1,7 @@
+{
+  "namespace": "user/chrispian/memory",
+  "memory_key": "decisions.test.tags_as_string",
+  "payload_summary": "Test fixture for pattern 4 — tags arrive as a JSON-array literal string with leaked parameter blob.",
+  "payload_body": "Body content.",
+  "tags": "[\"decision\", \"test\"]</tags>\n<parameter name=\"extra\">leaked</parameter>"
+}

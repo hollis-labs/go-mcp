@@ -1,0 +1,7 @@
+{
+  "namespace": "user/chrispian/memory",
+  "memory_key": "decisions.test.multiple_siblings_leaked",
+  "payload_summary": "Pattern 2 fixture — multiple siblings leaked into payload_summary with empty companion fields.</payload_summary>\n<parameter name=\"payload_body\">## Body\n\nThis is the recovered body content.</parameter>\n<parameter name=\"tags\">[\"decision\", \"recovered\"]</parameter>",
+  "payload_body": "",
+  "tags": ""
+}
