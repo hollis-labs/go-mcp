@@ -110,6 +110,33 @@ func TestApply_LimitClampedToMax(t *testing.T) {
 	}
 }
 
+func TestApply_CacheHintsOptIn(t *testing.T) {
+	items := []string{"a", "b"}
+	env := Apply(items, Config{}, "")
+	if env.TTLMs != 0 || env.CacheScope != "" {
+		t.Errorf("unexpected cache hints with no TTLMs set: TTLMs=%d CacheScope=%q", env.TTLMs, env.CacheScope)
+	}
+}
+
+func TestApply_CacheHintsDefaultScope(t *testing.T) {
+	items := []string{"a", "b"}
+	env := Apply(items, Config{TTLMs: 60000}, "")
+	if env.TTLMs != 60000 {
+		t.Errorf("TTLMs = %d, want 60000", env.TTLMs)
+	}
+	if env.CacheScope != "public" {
+		t.Errorf("CacheScope = %q, want %q (default)", env.CacheScope, "public")
+	}
+}
+
+func TestApply_CacheHintsExplicitScope(t *testing.T) {
+	items := []string{"a", "b"}
+	env := Apply(items, Config{TTLMs: 5000, CacheScope: "private"}, "")
+	if env.CacheScope != "private" {
+		t.Errorf("CacheScope = %q, want %q", env.CacheScope, "private")
+	}
+}
+
 type testRecord struct {
 	ID    string
 	Title string

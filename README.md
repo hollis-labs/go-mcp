@@ -1,25 +1,28 @@
 # go-mcp
 
 Shared Go utilities for building [Model Context Protocol](https://modelcontextprotocol.io/)
-tool servers. The module currently exposes:
+tool servers, targeting the 2026-07-28 MCP specification. The module
+currently exposes:
 
 - `staleness` — observation-only comparison of verified running and replacement images
-- `budget` — list-style response envelopes and truncation helpers
-- `server` — a stdio MCP server core with tool registration, strict tool
-  schemas, deterministic `tools/list` ordering, and request cancellation for
-  `notifications/cancelled`
-- `transport/http` — HTTP handler for exposing an MCP server over POST-based
-  MCP transport with request-context cancellation and origin checks
-
-The library is intentionally dependency-free (stdlib only) so any MCP server
-can import it without pulling in transitive dependencies.
+- `budget` — list-style response envelopes, client-caching hints, an
+  app-owned protocol error-code taxonomy, and truncation helpers
+- `server` — a thin wrapper around the official
+  [`modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk),
+  adding a simplified tool-registration surface with a required, typed
+  tool-annotation contract (`readOnlyHint`/`destructiveHint`/etc. are never
+  optional or inferred from a tool's name), deterministic `tools/list`
+  ordering, and stdio serving
+- `transport/http` — exposes a `server.Server` over the official SDK's
+  Streamable HTTP transport, in stateless mode, with an origin allowlist
 
 ## Status
 
 Pre-1.0 (`v0.2.x`). The `budget`, `server`, and `transport/http` packages are
 tested and usable, but the module is still being shaped around real app
-adoption. See
-[`CHANGELOG.md`](./CHANGELOG.md) for release notes.
+adoption. `server` and `transport/http` depend on
+`github.com/modelcontextprotocol/go-sdk`; `budget` and `staleness` remain
+stdlib-only. See [`CHANGELOG.md`](./CHANGELOG.md) for release notes.
 
 ## Install
 
@@ -98,23 +101,48 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   — ~4-chars-per-token heuristic for payload sizing (`budget/tokens.go`).
 - Constants: `DefaultLimit` (10), `MaxLimit` (25), `DefaultMaxTokens` (2000),
   `DefaultMaxBytes` (8000) (`budget/budget.go`).
+- `Envelope.TTLMs` / `Envelope.CacheScope` and `Config.TTLMs` /
+  `Config.CacheScope` — opt-in client-caching hints matching the MCP
+  2026-07-28 `CacheableResult` shape (`ttlMs`/`cacheScope`); zero/empty by
+  default, `CacheScope` defaults to `"public"` when `TTLMs` is set
+  (`budget/envelope.go`, `budget/budget.go`).
+- `ErrorCode` and the `ErrCode*` constants — an app-owned JSON-RPC
+  error-code taxonomy (`-32000..-32019`; `-32020..-32099` is reserved for
+  the MCP spec itself) (`budget/errors.go`).
+- `ProtocolError` and `NewProtocolError(code, message, data)` — a
+  structured, protocol-level MCP error for signaling a request-level
+  failure (as opposed to a tool-execution error reported in successful
+  result content) (`budget/errors.go`).
 
 `github.com/hollis-labs/go-mcp/server`
 
-- `Tool` and `ToolHandler` — MCP tool registration primitives
-- `NewServer(name, version)` — stdio MCP server with built-in JSON-RPC loop
-- `RegisterTool` — add tools to the server registry
-- `EmptyObjectSchema` and `ObjectSchema` — strict JSON object schema helpers
-- cancellation support for `notifications/cancelled`
-- deterministic `tools/list` ordering for stable agent discovery
+- `Tool` — a tool registration: name, description, input schema, handler,
+  and four **required** typed annotation fields (`ReadOnlyHint`,
+  `DestructiveHint`, `IdempotentHint`, `OpenWorldHint`) that are always
+  declared on the wire, never left optional or inferred from the tool's
+  name (`server/server.go`).
+- `ToolHandler` — `func(ctx, args map[string]any) (string, error)`, go-mcp's
+  simplified handler signature, unchanged across the v2 rewrite.
+- `NewServer(name, version)` — wraps an official-SDK `*mcp.Server`.
+- `RegisterTool` / `ToolDefinitions` / `CallTool` — registration and
+  direct, in-process tool invocation (bypassing the protocol layer).
+- `Run(ctx)` — serve over stdio via the official SDK.
+- `SDKServer()` — the underlying `*mcp.Server`, for transports (like
+  `transport/http`) that need to drive it directly.
+- `EmptyObjectSchema` and `ObjectSchema` — strict JSON object schema helpers.
+- `WithNotifier` / `Notify` / `NotifyProgress` / `NotifyMessage` — a
+  context-installed notification sink; handlers registered via
+  `RegisterTool` have one bridged to the real client session automatically.
+- Cancellation (`notifications/cancelled`) and deterministic `tools/list`
+  ordering are inherited from the official SDK.
 
 `github.com/hollis-labs/go-mcp/transport/http`
 
 - `NewHandler(server, opts)` — wrap a `server.Server` as an `http.Handler`
-- `HandlerOptions.AllowedOrigins` — optional browser-origin allowlist
-- POST JSON-RPC handling for `initialize`, `tools/list`, and `tools/call`
-- `202 Accepted` handling for notifications
-- request-context cancellation for in-flight tool calls
+  exposing it over the official SDK's Streamable HTTP transport, in
+  stateless mode (2026-07-28 / SEP-2567).
+- `HandlerOptions.AllowedOrigins` — optional browser-origin allowlist,
+  enforced ahead of the SDK handler (403 on a disallowed `Origin`).
 
 ### Executable staleness
 
@@ -154,7 +182,10 @@ behavior is included.
 
 ## Dependencies
 
-None. All packages use only the Go standard library.
+`budget` and `staleness` use only the Go standard library. `server` and
+`transport/http` depend on
+[`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)
+(and its transitive dependencies), which they wrap.
 
 ## Testing
 
