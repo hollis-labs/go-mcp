@@ -20,6 +20,17 @@ const defaultTerminateDuration = 5 * time.Second
 
 // dialStdio spawns cfg.Command and connects to it over stdin/stdout.
 //
+// The subprocess is spawned with exec.Command, not exec.CommandContext(ctx,
+// ...): ctx here is whatever per-call context the caller happened to pass
+// to the call that triggered this lazy dial (see withSession), and its
+// lifetime ends when that ONE call returns -- typically via a deferred
+// cancel in the caller, per CW-20260918-0046. Tying the subprocess to it
+// with exec.CommandContext killed the process the instant the triggering
+// call returned, before a second call ever got a chance to reuse the
+// connection. Neither shutdown path below needs ctx for the process's
+// lifetime: the SDK's own CommandTransport performs its MCP-spec shutdown
+// sequence from Close alone, and cappedPipe.teardown (below) does the same.
+//
 // When no response cap is requested (maxResponseBytes <= 0), this hands the
 // subprocess straight to the official SDK's own CommandTransport, which
 // performs the MCP-spec stdio shutdown sequence (close stdin, wait, SIGTERM,
@@ -42,7 +53,7 @@ func dialStdio(ctx context.Context, sdkClient *mcpsdk.Client, name string, cfg S
 		return nil, fmt.Errorf("go-mcp/client: stdio server %q: build env: %w", name, err)
 	}
 
-	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Env = env
 
 	if maxResponseBytes <= 0 {

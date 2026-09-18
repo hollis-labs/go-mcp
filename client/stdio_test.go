@@ -125,6 +125,43 @@ func TestStdio_RealSubprocess_CappedRoundTrip(t *testing.T) {
 	}
 }
 
+// TestStdio_ConnectionSurvivesPerCallContextCancellation is the
+// CW-20260918-0046 regression: a lazy dial-on-first-use triggered by a call
+// with its own short-lived context (the common real-world shape -- a
+// per-call context.WithTimeout with a deferred cancel) must not kill the
+// subprocess when that context is canceled at the end of the call that
+// dialed it. Before the fix, dialStdio spawned the subprocess with
+// exec.CommandContext(ctx, ...) using that same per-call ctx, so the
+// deferred cancel below reaped the process before the second call ever got
+// a chance to reuse the cached connection.
+func TestStdio_ConnectionSurvivesPerCallContextCancellation(t *testing.T) {
+	pool := NewPool()
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := pool.Register("fixture", fixtureServerConfig(t)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	callOnce := func(text string) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		res, _, err := pool.CallTool(ctx, "fixture", "echo", map[string]any{"text": text})
+		if err != nil {
+			t.Fatalf("CallTool(%q): %v", text, err)
+		}
+		return resultText(t, res)
+	}
+
+	if got := callOnce("first"); got != "first" {
+		t.Fatalf("first call = %q, want %q", got, "first")
+	}
+	// first's deferred cancel has now fired; the connection it dialed must
+	// still be alive for this second, independent call to reuse.
+	if got := callOnce("second"); got != "second" {
+		t.Fatalf("second call = %q, want %q", got, "second")
+	}
+}
+
 func TestStdio_RealSubprocess_OversizedResponseRejectedAndProcessReaped(t *testing.T) {
 	const capBytes = 4096
 	pool := NewPool(WithMaxResponseBytes(capBytes))
