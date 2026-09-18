@@ -1,8 +1,8 @@
 # go-mcp
 
 Shared Go utilities for building [Model Context Protocol](https://modelcontextprotocol.io/)
-tool servers, targeting the 2026-07-28 MCP specification. The module
-currently exposes:
+tool servers and clients, targeting the 2026-07-28 MCP specification. The
+module currently exposes:
 
 - `staleness` — observation-only comparison of verified running and replacement images
 - `budget` — list-style response envelopes, client-caching hints, an
@@ -13,23 +13,35 @@ currently exposes:
   tool-annotation contract (`readOnlyHint`/`destructiveHint`/etc. are never
   optional or inferred from a tool's name), deterministic `tools/list`
   ordering, and stdio serving
+- `client` — connects OUT to external MCP servers over stdio, streamable
+  HTTP, or legacy SSE: dial-on-first-use, one retry on a recoverable
+  error, a lazy health probe for non-stdio connections, and an opt-in
+  response-size cap
 - `transport/http` — exposes a `server.Server` over the official SDK's
   Streamable HTTP transport, in stateless mode, with an origin allowlist
+- `auth` — a pluggable auth/middleware seam for `transport/http`, with a
+  lightweight static-token default provider
+- `compat` — isolated backward-compat adapters for peers that don't speak
+  2026-07-28 yet; currently an SSE client transport for the legacy
+  2024-11-05 transport
 
 ## Status
 
-Pre-1.0. The `budget`, `server`, and `transport/http` packages are
-tested and usable, but the module is still being shaped around real app
-adoption. `server` and `transport/http` depend on
-`github.com/modelcontextprotocol/go-sdk`; `budget` and `staleness` remain
-stdlib-only. See [`CHANGELOG.md`](./CHANGELOG.md) for release notes.
+Pre-1.0. The `budget`, `server`, `client`, `transport/http`, `auth`, and
+`compat` packages are tested and usable, but the module is still being
+shaped around real app adoption. Every package except `budget` and
+`staleness` depends on `github.com/modelcontextprotocol/go-sdk`; those two
+remain stdlib-only. See [`CHANGELOG.md`](./CHANGELOG.md) for release notes.
 
 ## Install
 
 ```bash
 go get github.com/hollis-labs/go-mcp/budget
 go get github.com/hollis-labs/go-mcp/server
+go get github.com/hollis-labs/go-mcp/client
 go get github.com/hollis-labs/go-mcp/transport/http
+go get github.com/hollis-labs/go-mcp/auth
+go get github.com/hollis-labs/go-mcp/compat
 ```
 
 ## Quickstart
@@ -193,6 +205,39 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   `notifications/initialized`, so that handler only fires over a legacy
   pre-2026-07-28 handshake.
 
+`github.com/hollis-labs/go-mcp/client`
+
+- `Pool` — a named set of external MCP server connections, dialing each
+  lazily on first use and reusing the connection thereafter.
+  `NewPool(...Option)`, `Register(name, ServerConfig)`,
+  `Deregister(name)`, `Get(name) (*Client, error)`, `CallTool`,
+  `ListTools`, `Invalidate(name)` (tears the connection down without
+  deregistering — the next call transparently re-dials), `Close()`.
+- `ServerConfig` — `Transport` (`"stdio"` default, `"http"`/
+  `"streamable_http"`, or `"sse"`), `Command`/`Args`/`Env` (stdio),
+  `URL`/`Headers`/`TimeoutSeconds` (http/sse).
+- `Client` — one named connection: `CallTool`, `ListTools`, `Ping`,
+  `SetMaxResponseBytes(n)`, `Close()`, `SDKSession()` (escape hatch to the
+  underlying `*mcp.ClientSession`).
+- `CallMetadata` — observability for one call: `Server`, `Transport`,
+  `ReusedClient`, `HealthProbe`, `Reconnected`, `RetryCount`,
+  `AttemptCount`.
+- `Option`s: `WithIdentity(name, version)` (required — no default client
+  identity), `WithRetries(n)` (default 1), `WithProbeInterval(d)`
+  (default 30s, stdio is never probed), `WithMaxResponseBytes(n)` (opt-in;
+  unset means stdio uses the SDK's own `CommandTransport` and http/sse
+  inherit the SDK's `DefaultMaxEventSize`), `WithCommandEnv(func)` (stdio
+  subprocess environment policy; default inherits the host environment),
+  `WithHTTPClient(func)`, `WithLogger(*slog.Logger)`.
+- `DefaultMaxResponseBytes` — a suggested cap (10 MiB) for
+  `WithMaxResponseBytes`, not applied automatically.
+- `IsRecoverableError(err) bool` — the classifier deciding whether a
+  connection error is worth invalidating and re-dialing.
+- Reconnect and health-probe both leave a connection alone when the
+  failure was only the caller's own context ending — an abandoned
+  request looks identical to a broken connection from here, and closing
+  for it would charge the next caller a reconnect.
+
 `github.com/hollis-labs/go-mcp/transport/http`
 
 - `NewHandler(server, opts)` — wrap a `server.Server` as an `http.Handler`
@@ -239,8 +284,8 @@ behavior is included.
 
 ## Dependencies
 
-`budget` and `staleness` use only the Go standard library. `server` and
-`transport/http` depend on
+`budget` and `staleness` use only the Go standard library. `server`,
+`client`, `transport/http`, `auth`, and `compat` depend on
 [`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)
 (and its transitive dependencies), which they wrap.
 

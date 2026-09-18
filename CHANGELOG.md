@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.5.0 — 2026-09-18
+
+### Added
+
+- `client` — a new package for connecting OUT to external MCP servers over
+  stdio, streamable HTTP, or legacy SSE (CW-20260918-0013). go-mcp was
+  server-only by design; Hadron and Nanite each independently built the
+  same connect/reconnect/health-probe shape against the raw SDK, and
+  Tether built a heavier version of the same problem against a different
+  SDK. `Pool`/`Client` follow Hadron's proven reactive shape (dial on
+  first use, one retry on a recoverable error, a lazy 30s non-stdio
+  health probe) rather than Tether's proactive supervisor. Response-size
+  capping (`WithMaxResponseBytes`/`Client.SetMaxResponseBytes`) is
+  opt-in and changes no existing caller's behavior by default; leak-
+  prevention-on-error (any connection-shaped error tears the connection
+  down before deciding whether to retry) is unconditional.
+
+### Fixed
+
+- `compat` — `NewSSEClientTransport`'s sanitizing reader now bounds how
+  much of one not-yet-terminated SSE event block it will buffer
+  (`maxPartialEventBytes`, 1 MiB) while scanning for the blank-line
+  terminator. A server that never sent one could previously grow that
+  buffer without limit, exhausting memory before the downstream
+  transport's own `MaxEventSize` cap ever saw a complete block to check.
+
 ## v0.4.3 — 2026-09-18
 
 ### Added
