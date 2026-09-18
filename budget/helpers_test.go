@@ -27,10 +27,10 @@ func TestClamp(t *testing.T) {
 
 func TestExtractLimit(t *testing.T) {
 	tests := []struct {
-		name    string
-		params  map[string]any
-		def     int
-		want    int
+		name   string
+		params map[string]any
+		def    int
+		want   int
 	}{
 		{"nil params", nil, 10, 10},
 		{"missing key", map[string]any{}, 10, 10},
@@ -114,4 +114,3 @@ func TestToolJSON(t *testing.T) {
 		}
 	})
 }
-

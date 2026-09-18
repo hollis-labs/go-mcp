@@ -4,9 +4,9 @@ import "testing"
 
 func TestEstimateTokens(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   []byte
-		want    int
+		name  string
+		input []byte
+		want  int
 	}{
 		{"empty", []byte{}, 0},
 		{"one byte", []byte("a"), 1},
