@@ -350,6 +350,7 @@ func adaptHandler(name string, h ToolHandler) mcpsdk.ToolHandler {
 		}
 
 		handlerCtx := WithNotifier(ctx, sessionNotifier(ctx, req.Session))
+		handlerCtx = WithMeta(handlerCtx, req.Params.Meta)
 
 		result, err := h(handlerCtx, args)
 		if ctx.Err() != nil {

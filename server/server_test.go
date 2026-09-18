@@ -723,3 +723,48 @@ func TestRemoveToolsIsSymmetricWithRegisterTool(t *testing.T) {
 		t.Fatalf("wire ListTools after RemoveTools = %#v, want only \"keep\"", res.Tools)
 	}
 }
+
+// TestMetaFromContextReadsCallToolMeta covers the seam a caller-attached
+// "_meta" idempotency key (or similar out-of-band field) needs: a
+// ToolHandler can read what the client actually sent, not just its
+// arguments, and a direct in-process CallTool (which carries no protocol
+// _meta at all) sees nil rather than a stale value from a previous call.
+func TestMetaFromContextReadsCallToolMeta(t *testing.T) {
+	seen := make(chan map[string]any, 1)
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{Name: "echo_meta", Description: "echo_meta", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
+		Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+			seen <- MetaFromContext(ctx)
+			return "ok", nil
+		},
+	})
+
+	cs := connect(t, srv, nil)
+	_, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "echo_meta",
+		Meta: mcpsdk.Meta{"hadron/idempotencyKey": "call-1"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	select {
+	case meta := <-seen:
+		if meta["hadron/idempotencyKey"] != "call-1" {
+			t.Fatalf("MetaFromContext = %#v, want hadron/idempotencyKey=call-1", meta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never observed a context")
+	}
+
+	if _, err := srv.CallTool(context.Background(), "echo_meta", nil); err != nil {
+		t.Fatalf("direct CallTool: %v", err)
+	}
+	select {
+	case meta := <-seen:
+		if meta != nil {
+			t.Fatalf("direct in-process CallTool leaked protocol _meta: %#v", meta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("direct call never invoked the handler")
+	}
+}

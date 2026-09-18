@@ -173,6 +173,12 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 - `WithNotifier` / `Notify` / `NotifyProgress` / `NotifyMessage` — a
   context-installed notification sink; handlers registered via
   `RegisterTool` have one bridged to the real client session automatically.
+- `MetaFromContext` — reads the tool call's protocol-level `_meta` object
+  (installed automatically for every call served through the protocol
+  layer; nil for a direct in-process `Server.CallTool`, which carries no
+  `_meta`). For a caller-attached field that isn't a tool argument, such as
+  an idempotency key sent via `_meta` -- a convention this portfolio
+  already uses.
 - Cancellation (`notifications/cancelled`) and deterministic `tools/list`
   ordering are inherited from the official SDK.
 - **Prompts, resources, and session lifecycle are not wrapped**, by design:

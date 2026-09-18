@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.4.3 — 2026-09-18
+
+### Added
+
+- `server` — `MetaFromContext(ctx) map[string]any`, reading a tool call's
+  protocol-level `_meta` object (`WithMeta` installs it; `adaptHandler` does
+  so automatically for every protocol-served call). `ToolHandler`'s
+  simplified `(ctx, args map[string]any)` signature had no way to see
+  anything outside the tool's own arguments, but a caller-attached
+  out-of-band field sent via `_meta` -- Hadron's `hadron/idempotencyKey`
+  convention, discovered while porting its Torque bulk-create end-to-end
+  fixture -- has nowhere else to go. Direct in-process `Server.CallTool`
+  bypasses the protocol layer entirely, so it carries no `_meta`;
+  `MetaFromContext` returns nil there rather than a stale value.
+
+### Notes
+
+- Mirrors the existing `WithNotifier`/`Notify` context-injection pattern
+  rather than introducing a new mechanism.
+
 ## v0.4.2 — 2026-09-18
 
 ### Added
