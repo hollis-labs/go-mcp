@@ -187,6 +187,16 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   `transport/http`) that need to drive it directly, and for prompts,
   resources, and session lifecycle, which go-mcp does not wrap (see below).
 - `EmptyObjectSchema` and `ObjectSchema` — strict JSON object schema helpers.
+- `Prop` and its builders — `StringProp`, `StringEnumProp`, `NumberProp`,
+  `IntegerProp`, `BooleanProp`, `ArrayProp`, `StringArrayProp`, `ObjectProp`
+  — property-level declarations (name, JSON Schema shape, required flag),
+  generalized from near-identical helpers eight apps independently wrote
+  after migrating off mark3labs/mcp-go's typed `mcp.WithString`/`WithNumber`/
+  `WithBoolean`/`Required` builder chain, which go-mcp's raw `any`
+  `InputSchema` has no equivalent for. `InputSchema(props ...Prop)` is the
+  property-level counterpart to `ObjectSchema`: it assembles a strict object
+  schema from a set of `Prop`s and promotes each `Required` one into the
+  schema's `required` list (`server/schema.go`).
 - `WithNotifier` / `Notify` / `NotifyProgress` / `NotifyMessage` — a
   context-installed notification sink; handlers registered via
   `RegisterTool` have one bridged to the real client session automatically.
