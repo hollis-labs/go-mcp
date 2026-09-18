@@ -1,364 +1,260 @@
+// Package server is a thin wrapper around the official MCP Go SDK
+// (github.com/modelcontextprotocol/go-sdk), targeting the 2026-07-28 MCP
+// specification. It adds go-mcp's simplified tool-registration surface: an
+// untyped handler signature, and a required typed tool-annotation contract
+// (rather than annotations left optional or inferred from a tool's name).
 package server
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
 	"sort"
 	"sync"
+
+	"github.com/hollis-labs/go-mcp/budget"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const ProtocolVersion = "2024-11-05"
+// ProtocolVersion is the MCP specification version this package targets.
+const ProtocolVersion = "2026-07-28"
 
-type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
+// ErrUnknownTool is returned by CallTool when no tool with the given name is
+// registered.
+var ErrUnknownTool = errors.New("unknown tool")
 
-type jsonRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   *rpcError   `json:"error,omitempty"`
-}
+// ToolHandler implements a tool's behavior. args is the tool call's
+// arguments, decoded from JSON into a map. The returned string becomes the
+// tool result's text content; a returned error is reported to the caller as
+// error content (CallToolResult.IsError), not as a protocol-level error.
+type ToolHandler func(ctx context.Context, args map[string]any) (string, error)
 
-type rpcError struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-type serverInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-type initializeResult struct {
-	ProtocolVersion string           `json:"protocolVersion"`
-	ServerInfo      serverInfo       `json:"serverInfo"`
-	Capabilities    serverCapability `json:"capabilities"`
-}
-
-type serverCapability struct {
-	Tools *toolsCapability `json:"tools,omitempty"`
-}
-
-type toolsCapability struct {
-	ListChanged bool `json:"listChanged"`
-}
-
-type toolDef struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"inputSchema"`
-}
-
-type ToolDefinition = toolDef
-
-type toolsListResult struct {
-	Tools []toolDef `json:"tools"`
-}
-
-type toolCallParams struct {
-	Name      string                 `json:"name"`
-	Arguments map[string]interface{} `json:"arguments,omitempty"`
-}
-
-type cancelledParams struct {
-	RequestID json.RawMessage `json:"requestId"`
-	Reason    string          `json:"reason,omitempty"`
-}
-
-type toolCallResult struct {
-	Content []contentBlock `json:"content"`
-	IsError bool           `json:"isError,omitempty"`
-}
-
-type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type ToolHandler func(ctx context.Context, args map[string]interface{}) (string, error)
-
+// Tool describes a tool registration.
+//
+// The four hint fields are the MCP tool-annotation set. They are required:
+// every registration states them explicitly, rather than leaving them
+// optional (as the underlying spec does) or letting a caller infer them from
+// the tool's name -- the latter was the exact shape of a permission-gating
+// bug this contract exists to make structurally impossible.
 type Tool struct {
 	Name        string
 	Description string
-	InputSchema interface{}
+	InputSchema any
 	Handler     ToolHandler
+
+	// ReadOnlyHint reports whether the tool only reads, never modifying its
+	// environment.
+	ReadOnlyHint bool
+	// DestructiveHint reports whether the tool may perform destructive
+	// updates to its environment. Meaningful only when ReadOnlyHint is false.
+	DestructiveHint bool
+	// IdempotentHint reports whether calling the tool repeatedly with the
+	// same arguments has no additional effect. Meaningful only when
+	// ReadOnlyHint is false.
+	IdempotentHint bool
+	// OpenWorldHint reports whether the tool interacts with an open-ended
+	// set of external entities (e.g. a web search) rather than a closed
+	// domain (e.g. a memory store).
+	OpenWorldHint bool
 }
 
-var ErrUnknownTool = fmt.Errorf("unknown tool")
+// ToolAnnotations is the typed MCP tool-annotation set, matching Tool's
+// required hint fields.
+type ToolAnnotations struct {
+	ReadOnlyHint    bool `json:"readOnlyHint"`
+	DestructiveHint bool `json:"destructiveHint"`
+	IdempotentHint  bool `json:"idempotentHint"`
+	OpenWorldHint   bool `json:"openWorldHint"`
+}
 
+// ToolDefinition is a tool's public shape, as returned by ToolDefinitions.
+type ToolDefinition struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema any             `json:"inputSchema"`
+	Annotations ToolAnnotations `json:"annotations"`
+}
+
+// Server wraps an official-SDK *mcpsdk.Server, adding go-mcp's
+// tool-registration surface. The zero value is not usable; construct one
+// with NewServer.
 type Server struct {
+	sdk     *mcpsdk.Server
 	name    string
 	version string
 
-	mu    sync.RWMutex
-	tools map[string]Tool
-
-	in io.Reader
-
-	out     io.Writer
-	writeMu sync.Mutex
-
-	inFlightMu sync.Mutex
-	inFlight   map[string]context.CancelFunc
-	wg         sync.WaitGroup
+	mu       sync.RWMutex
+	defs     map[string]ToolDefinition
+	handlers map[string]ToolHandler
 }
 
+// NewServer creates a Server advertising the given name and version.
 func NewServer(name, version string) *Server {
 	return &Server{
+		sdk:      mcpsdk.NewServer(&mcpsdk.Implementation{Name: name, Version: version}, nil),
 		name:     name,
 		version:  version,
-		tools:    make(map[string]Tool),
-		in:       os.Stdin,
-		out:      os.Stdout,
-		inFlight: make(map[string]context.CancelFunc),
+		defs:     make(map[string]ToolDefinition),
+		handlers: make(map[string]ToolHandler),
 	}
 }
 
-func (s *Server) RegisterTool(t Tool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.tools[t.Name] = t
-}
-
+// Info returns the server's advertised name and version.
 func (s *Server) Info() (name, version string) {
 	return s.name, s.version
 }
 
+// SDKServer returns the underlying official-SDK server, for callers (such as
+// transport/http) that need to drive it directly.
+func (s *Server) SDKServer() *mcpsdk.Server {
+	return s.sdk
+}
+
+// RegisterTool registers a tool, or replaces a previous registration with
+// the same name.
+func (s *Server) RegisterTool(t Tool) {
+	annotations := ToolAnnotations{
+		ReadOnlyHint:    t.ReadOnlyHint,
+		DestructiveHint: t.DestructiveHint,
+		IdempotentHint:  t.IdempotentHint,
+		OpenWorldHint:   t.OpenWorldHint,
+	}
+
+	s.mu.Lock()
+	s.defs[t.Name] = ToolDefinition{
+		Name:        t.Name,
+		Description: t.Description,
+		InputSchema: t.InputSchema,
+		Annotations: annotations,
+	}
+	s.handlers[t.Name] = t.Handler
+	s.mu.Unlock()
+
+	destructive := t.DestructiveHint
+	openWorld := t.OpenWorldHint
+	sdkTool := &mcpsdk.Tool{
+		Name:        t.Name,
+		Description: t.Description,
+		InputSchema: t.InputSchema,
+		Annotations: &mcpsdk.ToolAnnotations{
+			ReadOnlyHint: t.ReadOnlyHint,
+			// Always set explicitly (never left nil): the SDK defaults an
+			// absent hint to true, which is exactly the silent-assumption
+			// this contract exists to rule out.
+			DestructiveHint: &destructive,
+			IdempotentHint:  t.IdempotentHint,
+			OpenWorldHint:   &openWorld,
+		},
+	}
+	s.sdk.AddTool(sdkTool, adaptHandler(t.Name, t.Handler))
+}
+
+// ToolDefinitions returns all registered tools' public definitions, sorted
+// deterministically by name.
 func (s *Server) ToolDefinitions() []ToolDefinition {
 	s.mu.RLock()
-	defs := make([]ToolDefinition, 0, len(s.tools))
-	for _, t := range s.tools {
-		defs = append(defs, ToolDefinition{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.InputSchema,
-		})
+	defs := make([]ToolDefinition, 0, len(s.defs))
+	for _, d := range s.defs {
+		defs = append(defs, d)
 	}
 	s.mu.RUnlock()
-	sort.Slice(defs, func(i, j int) bool {
-		return defs[i].Name < defs[j].Name
-	})
+
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
 }
 
-func (s *Server) CallTool(ctx context.Context, name string, args map[string]interface{}) (string, error) {
+// CallTool invokes a registered tool's handler directly, in-process,
+// bypassing the MCP protocol layer. It is intended for direct programmatic
+// use and tests. RPC callers are served through the wrapped SDK server, via
+// Run or an HTTP transport, which additionally attach resultType, cache and
+// annotation metadata that this direct path does not.
+func (s *Server) CallTool(ctx context.Context, name string, args map[string]any) (string, error) {
 	s.mu.RLock()
-	tool, ok := s.tools[name]
+	h, ok := s.handlers[name]
 	s.mu.RUnlock()
 	if !ok {
 		return "", ErrUnknownTool
 	}
-	return tool.Handler(ctx, args)
+	return h(ctx, args)
 }
 
-func (s *Server) Run() error {
-	sessionCtx, sessionCancel := context.WithCancel(context.Background())
-	defer sessionCancel()
-	defer s.cancelAllInFlight()
-	defer s.wg.Wait()
+// Run serves the MCP protocol over stdio until ctx is done or the client
+// disconnects.
+func (s *Server) Run(ctx context.Context) error {
+	return s.sdk.Run(ctx, &mcpsdk.StdioTransport{})
+}
 
-	scanner := bufio.NewScanner(s.in)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+// adaptHandler wraps a go-mcp ToolHandler as an official-SDK raw ToolHandler:
+// it decodes arguments, installs a Notifier bridged to the client session,
+// and maps the (string, error) result onto a CallToolResult. Cancellation
+// (notifications/cancelled) and resultType (the MRTR complete/input_required
+// pattern) are handled by the SDK's own dispatch and are not this
+// function's concern.
+func adaptHandler(name string, h ToolHandler) mcpsdk.ToolHandler {
+	return func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		var args map[string]any
+		if len(req.Params.Arguments) > 0 {
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				// Malformed arguments are a protocol-level failure (the
+				// request itself is invalid), not a tool-execution error, so
+				// this reports a structured JSON-RPC error in go-mcp's
+				// app-owned code range rather than embedding it in tool
+				// result content.
+				protoErr := budget.NewProtocolError(budget.ErrCodeInvalidInput,
+					fmt.Sprintf("tool %q: invalid arguments: %v", name, err), nil)
+				return nil, &jsonrpc.Error{Code: int64(protoErr.Code), Message: protoErr.Message}
+			}
 		}
 
-		var req jsonRPCRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			s.writeError(nil, -32700, "Parse error", err.Error())
-			continue
+		handlerCtx := WithNotifier(ctx, sessionNotifier(ctx, req.Session))
+
+		text, err := h(handlerCtx, args)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil {
+			return &mcpsdk.CallToolResult{
+				Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: err.Error()}},
+				IsError: true,
+			}, nil
 		}
 
-		s.handleRequest(sessionCtx, &req)
+		return &mcpsdk.CallToolResult{
+			Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: text}},
+		}, nil
 	}
-
-	return scanner.Err()
 }
 
-func (s *Server) handleRequest(sessionCtx context.Context, req *jsonRPCRequest) {
-	isNotification := req.ID == nil || string(req.ID) == "null"
-
-	switch req.Method {
-	case "initialize":
-		if isNotification {
-			return
-		}
-		s.writeResult(req.ID, initializeResult{
-			ProtocolVersion: ProtocolVersion,
-			ServerInfo: serverInfo{
-				Name:    s.name,
-				Version: s.version,
-			},
-			Capabilities: serverCapability{
-				Tools: &toolsCapability{ListChanged: false},
-			},
-		})
-
-	case "notifications/initialized":
-	case "notifications/cancelled":
-		s.handleCancelled(req)
-
-	case "tools/list":
-		if isNotification {
-			return
-		}
-		s.writeResult(req.ID, toolsListResult{Tools: s.ToolDefinitions()})
-
-	case "tools/call":
-		if isNotification {
-			return
-		}
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.handleToolCall(sessionCtx, req)
-		}()
-
-	default:
-		if !isNotification {
-			s.writeError(req.ID, -32601, "Method not found", req.Method)
+// sessionNotifier bridges go-mcp's context-installed Notifier to the
+// client's MCP session, so handlers written against WithNotifier/Notify (see
+// notify.go) work unchanged when served through the SDK.
+func sessionNotifier(ctx context.Context, session *mcpsdk.ServerSession) func(Notification) {
+	return func(n Notification) {
+		params, _ := n.Params.(map[string]any)
+		switch n.Method {
+		case "notifications/progress":
+			pp := &mcpsdk.ProgressNotificationParams{ProgressToken: params["progressToken"]}
+			if v, ok := params["progress"].(float64); ok {
+				pp.Progress = v
+			}
+			if v, ok := params["total"].(float64); ok {
+				pp.Total = v
+			}
+			if v, ok := params["message"].(string); ok {
+				pp.Message = v
+			}
+			_ = session.NotifyProgress(ctx, pp)
+		case "notifications/message":
+			level, _ := params["level"].(string)
+			// Best-effort: logging/setLevel + notifications/message are
+			// deprecated as of 2026-07-28 (SEP-2577) and the SDK silently
+			// drops the notification until the client has set a level.
+			_ = session.Log(ctx, &mcpsdk.LoggingMessageParams{
+				Level: mcpsdk.LoggingLevel(level),
+				Data:  params["message"],
+			})
 		}
 	}
-}
-
-func (s *Server) handleCancelled(req *jsonRPCRequest) {
-	var params cancelledParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return
-	}
-	if key := requestIDKey(params.RequestID); key != "" {
-		s.cancelRequest(key)
-	}
-}
-
-func (s *Server) handleToolCall(sessionCtx context.Context, req *jsonRPCRequest) {
-	var params toolCallParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		s.writeError(req.ID, -32602, "Invalid params", err.Error())
-		return
-	}
-
-	ctx, cancel := context.WithCancel(sessionCtx)
-	requestKey := requestIDKey(req.ID)
-	if requestKey != "" {
-		s.trackRequest(requestKey, cancel)
-		defer s.finishRequest(requestKey)
-	} else {
-		defer cancel()
-	}
-
-	text, err := s.CallTool(ctx, params.Name, params.Arguments)
-	if err == ErrUnknownTool {
-		s.writeResult(req.ID, toolCallResult{
-			Content: []contentBlock{{Type: "text", Text: fmt.Sprintf("unknown tool: %s", params.Name)}},
-			IsError: true,
-		})
-		return
-	}
-	if ctx.Err() != nil {
-		return
-	}
-	if err != nil {
-		s.writeResult(req.ID, toolCallResult{
-			Content: []contentBlock{{Type: "text", Text: err.Error()}},
-			IsError: true,
-		})
-		return
-	}
-
-	s.writeResult(req.ID, toolCallResult{
-		Content: []contentBlock{{Type: "text", Text: text}},
-	})
-}
-
-func requestIDKey(id json.RawMessage) string {
-	if len(id) == 0 {
-		return ""
-	}
-	return string(id)
-}
-
-func (s *Server) trackRequest(id string, cancel context.CancelFunc) {
-	s.inFlightMu.Lock()
-	defer s.inFlightMu.Unlock()
-	s.inFlight[id] = cancel
-}
-
-func (s *Server) finishRequest(id string) {
-	s.inFlightMu.Lock()
-	cancel, ok := s.inFlight[id]
-	if ok {
-		delete(s.inFlight, id)
-	}
-	s.inFlightMu.Unlock()
-	if ok {
-		cancel()
-	}
-}
-
-func (s *Server) cancelRequest(id string) {
-	s.inFlightMu.Lock()
-	cancel, ok := s.inFlight[id]
-	s.inFlightMu.Unlock()
-	if ok {
-		cancel()
-	}
-}
-
-func (s *Server) cancelAllInFlight() {
-	s.inFlightMu.Lock()
-	cancels := make([]context.CancelFunc, 0, len(s.inFlight))
-	for id, cancel := range s.inFlight {
-		cancels = append(cancels, cancel)
-		delete(s.inFlight, id)
-	}
-	s.inFlightMu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
-	}
-}
-
-func (s *Server) writeResult(id json.RawMessage, result interface{}) {
-	resp := jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result:  result,
-	}
-	s.writeJSON(resp)
-}
-
-func (s *Server) writeError(id json.RawMessage, code int, message, data string) {
-	resp := jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error: &rpcError{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
-	}
-	s.writeJSON(resp)
-}
-
-func (s *Server) writeJSON(v interface{}) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return
-	}
-	data = append(data, '\n')
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	_, _ = s.out.Write(data)
 }

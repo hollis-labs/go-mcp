@@ -18,6 +18,14 @@ type Config struct {
 	Limit     int // max items to include (default DefaultLimit, max MaxLimit)
 	MaxBytes  int // max response bytes (default DefaultMaxBytes)
 	MaxTokens int // max estimated tokens (default DefaultMaxTokens)
+
+	// TTLMs, if positive, is copied onto the resulting Envelope as a
+	// client-caching hint (see [Envelope.TTLMs]). It is opt-in: zero means
+	// no caching metadata is added. CacheScope defaults to "public"
+	// (matching the MCP spec's CacheableResult default) when TTLMs is set
+	// and CacheScope is left empty.
+	TTLMs      int
+	CacheScope string
 }
 
 // withDefaults returns a copy of cfg with zero values replaced by defaults,
@@ -33,6 +41,9 @@ func (cfg Config) withDefaults() Config {
 	}
 	if cfg.MaxTokens <= 0 {
 		cfg.MaxTokens = DefaultMaxTokens
+	}
+	if cfg.TTLMs > 0 && cfg.CacheScope == "" {
+		cfg.CacheScope = "public"
 	}
 	return cfg
 }
@@ -67,10 +78,12 @@ func Apply[T any](items []T, cfg Config, hintTemplate string) Envelope {
 	}
 
 	return Envelope{
-		Items:     included,
-		Count:     limit,
-		Total:     total,
-		Truncated: truncated,
-		Hint:      hint,
+		Items:      included,
+		Count:      limit,
+		Total:      total,
+		Truncated:  truncated,
+		Hint:       hint,
+		TTLMs:      cfg.TTLMs,
+		CacheScope: cfg.CacheScope,
 	}
 }
