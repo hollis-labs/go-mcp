@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.7.0 — 2026-09-18
+
+### Added
+
+- `server` — `Prop` and its builders (`StringProp`, `StringEnumProp`,
+  `NumberProp`, `IntegerProp`, `BooleanProp`, `ArrayProp`,
+  `StringArrayProp`, `ObjectProp`) plus `InputSchema(props ...Prop)`, the
+  property-level counterpart to `ObjectSchema`. Surveyed eight apps
+  (Tether, Hadron, Tesseract, Torque, fragments-engine, Stack Explorer,
+  NIL, ...) before designing this: each independently wrote a near-identical
+  `strProp`/`numProp`/`boolProp`-shaped helper after migrating off
+  mark3labs/mcp-go, whose typed `mcp.WithString`/`WithNumber`/`WithBoolean`/
+  `Required` builder chain go-mcp's raw `any` `InputSchema` has no
+  equivalent for. This is a synthesis of the richest parts of three real
+  designs (Tesseract's required-flag-on-the-definition shape, Tether's
+  fuller type coverage including enum/array/object, NIL's `integer` vs
+  `number` distinction), not a straight port of any single one -- so
+  existing per-app helpers are not source-compatible with it and each app
+  adopting it does a small mechanical rename, not a no-op swap.
+
 ## v0.6.0 — 2026-09-18
 
 ### Added
