@@ -41,6 +41,69 @@ const (
 	minAppOwnedCode ErrorCode = -32019
 )
 
+// ToolError is a structured, tool-execution error: reported inside a
+// successful CallToolResult's content (IsError=true), not as a
+// protocol-level JSON-RPC error -- see ProtocolError for that case. Return
+// one as a ToolHandler's error and the server package gives it the same
+// structured-content treatment as a successful result, instead of
+// collapsing it to a bare error string.
+//
+// Code is a short, app-owned, freeform string (e.g. "not_found",
+// "insufficient_scope") -- deliberately not a fixed enum, since each app's
+// tool vocabulary differs and go-mcp does not own it.
+//
+// The point of the rest of the fields is that the caller already knows the
+// error and its context; giving the calling agent a concrete next step
+// costs nothing extra and saves it a guess. NextStep is where that goes:
+// state what the agent should do now ("call hadron_runs_list to find a
+// valid run_id"), not just what went wrong.
+type ToolError struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Field     string `json:"field,omitempty"`
+	Retryable bool   `json:"retryable"`
+	NextStep  string `json:"nextStep,omitempty"`
+	HelpTool  string `json:"helpTool,omitempty"`
+}
+
+// Error implements the error interface.
+func (e *ToolError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+// NewToolError builds a ToolError with just code and message set. Chain
+// WithField/WithRetryable/WithNextStep/WithHelpTool to add the rest.
+func NewToolError(code, message string) *ToolError {
+	return &ToolError{Code: code, Message: message}
+}
+
+// WithField sets the affected argument or entity field, when applicable.
+func (e *ToolError) WithField(field string) *ToolError {
+	e.Field = field
+	return e
+}
+
+// WithRetryable marks whether retrying the same call is safe. Defaults to
+// false: don't imply retry safety unless the caller knows it holds.
+func (e *ToolError) WithRetryable(retryable bool) *ToolError {
+	e.Retryable = retryable
+	return e
+}
+
+// WithNextStep sets what the calling agent should do now -- the field this
+// type exists for. Phrase it as an action, not a restatement of the error.
+func (e *ToolError) WithNextStep(step string) *ToolError {
+	e.NextStep = step
+	return e
+}
+
+// WithHelpTool names another tool the agent can call for more context or
+// correction (e.g. a list/search tool to find a valid id).
+func (e *ToolError) WithHelpTool(tool string) *ToolError {
+	e.HelpTool = tool
+	return e
+}
+
 // ProtocolError is a structured, protocol-level MCP error: an app-owned
 // error code, a message, and optional machine-readable data. It implements
 // error, and its fields match the shape MCP transports expect for a

@@ -18,7 +18,7 @@ currently exposes:
 
 ## Status
 
-Pre-1.0 (`v0.2.x`). The `budget`, `server`, and `transport/http` packages are
+Pre-1.0. The `budget`, `server`, and `transport/http` packages are
 tested and usable, but the module is still being shaped around real app
 adoption. `server` and `transport/http` depend on
 `github.com/modelcontextprotocol/go-sdk`; `budget` and `staleness` remain
@@ -50,7 +50,7 @@ type Task struct {
     Title string `json:"title"`
 }
 
-func listTasks(params map[string]any, allTasks []Task) string {
+func listTasks(params map[string]any, allTasks []Task) (any, error) {
     // Pull caller-provided pagination, clamped to safe bounds.
     limit, _ := budget.ExtractPagination(params)
 
@@ -62,18 +62,30 @@ func listTasks(params map[string]any, allTasks []Task) string {
         "%d tasks found. Use task_get for details.",
     )
 
-    // Serialize to a JSON string suitable for an MCP tool response.
-    return budget.ToolJSON(env)
+    // Return the value itself, as a server.ToolHandler would: go-mcp
+    // JSON-marshals it into CallToolResult.StructuredContent AND a mirrored
+    // text block. Don't pre-marshal with budget.ToolJSON here -- that
+    // produces a string, which is used verbatim as prose and never
+    // promoted to StructuredContent.
+    return env, nil
 }
 
 func main() {
     tasks := []Task{{ID: "1", Title: "first"}, {ID: "2", Title: "second"}}
-    fmt.Println(listTasks(map[string]any{"limit": 1}, tasks))
+    result, _ := listTasks(map[string]any{"limit": 1}, tasks)
+    fmt.Printf("%+v\n", result)
 }
 ```
 
-For error responses, use `budget.ToolError(code, message)` to produce a
-consistent JSON error object.
+For error responses, return a `*budget.ToolError` — it gets the same
+StructuredContent treatment, so the calling agent sees a machine-readable
+code plus a concrete next step, not just a message:
+
+```go
+return nil, budget.NewToolError("not_found", "task TASK-001 not found").
+    WithField("task_id").
+    WithNextStep("call task_list to find a valid task_id")
+```
 
 A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 
@@ -94,9 +106,19 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 - `ExtractPagination(params map[string]any) (limit, offset int)` — read
   `"limit"` and `"offset"` from an untyped params map (`budget/helpers.go`).
 - `ToolJSON(v any) string` — marshal a value to a JSON string; returns a JSON
-  error object on failure (`budget/helpers.go`).
-- `ToolError(code, message string) string` — build a JSON error response
-  (`budget/helpers.go`).
+  error object on failure (`budget/helpers.go`). For a `server.ToolHandler`,
+  prefer returning the value directly over pre-marshaling with this: a
+  `server.ToolHandler` result gets StructuredContent for free, a
+  pre-marshaled string doesn't. Useful for building text by hand outside a
+  `ToolHandler`.
+- `ToolError` — a structured, tool-execution error (`Code`, `Message`,
+  `Field`, `Retryable`, `NextStep`, `HelpTool`), for reporting inside a
+  successful `CallToolResult`'s content (`IsError=true`), not as a
+  protocol-level error — see `ProtocolError` for that case. Build one with
+  `NewToolError(code, message)` and chain `WithField`/`WithRetryable`/
+  `WithNextStep`/`WithHelpTool`; a `server.ToolHandler` returning one gets
+  its full shape preserved in StructuredContent, not collapsed to a bare
+  message (`budget/errors.go`).
 - `EstimateTokens(payload []byte) int` and `EstimateTokensFromString(s string) int`
   — ~4-chars-per-token heuristic for payload sizing (`budget/tokens.go`).
 - Constants: `DefaultLimit` (10), `MaxLimit` (25), `DefaultMaxTokens` (2000),
@@ -116,13 +138,19 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 
 `github.com/hollis-labs/go-mcp/server`
 
-- `Tool` — a tool registration: name, description, input schema, handler,
-  and four **required** typed annotation fields (`ReadOnlyHint`,
-  `DestructiveHint`, `IdempotentHint`, `OpenWorldHint`) that are always
-  declared on the wire, never left optional or inferred from the tool's
-  name (`server/server.go`).
-- `ToolHandler` — `func(ctx, args map[string]any) (string, error)`, go-mcp's
-  simplified handler signature, unchanged across the v2 rewrite.
+- `Tool` — a tool registration: name, optional `Title`, description, input
+  schema, optional `OutputSchema`, handler, and four **required** typed
+  annotation fields (`ReadOnlyHint`, `DestructiveHint`, `IdempotentHint`,
+  `OpenWorldHint`) that are always declared on the wire, never left optional
+  or inferred from the tool's name (`server/server.go`).
+- `ToolHandler` — `func(ctx, args map[string]any) (any, error)`. A `string`
+  result is used verbatim as text content. Anything else is JSON-marshaled
+  into `CallToolResult.StructuredContent` (SEP-2106) *and* mirrored as JSON
+  text content, so a client reading either gets the same data — most tools
+  should return a map/struct/slice, not a pre-marshaled JSON string. A
+  returned `*budget.ToolError` keeps its full structured shape in
+  StructuredContent; any other error is reported as its plain `Error()`
+  string, exactly as before.
 - `NewServer(name, version, ...Option)` — wraps an official-SDK
   `*mcp.Server`. `Option` populates the handful of official-SDK
   `ServerOptions` fields that can only be set at construction time and have

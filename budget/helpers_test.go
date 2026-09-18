@@ -115,16 +115,3 @@ func TestToolJSON(t *testing.T) {
 	})
 }
 
-func TestToolError(t *testing.T) {
-	got := ToolError("not_found", "task TASK-001 not found")
-	var parsed map[string]string
-	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
-		t.Fatalf("ToolError returned invalid JSON: %s", got)
-	}
-	if parsed["error"] != "not_found" {
-		t.Errorf("error = %q, want not_found", parsed["error"])
-	}
-	if parsed["message"] != "task TASK-001 not found" {
-		t.Errorf("message = %q", parsed["message"])
-	}
-}

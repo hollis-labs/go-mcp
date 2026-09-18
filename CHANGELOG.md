@@ -2,6 +2,59 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.4.0 — 2026-09-18
+
+Per `project/atlas/knowledge/mcp-acp-shared-contract-and-adoption-notes`'s
+tool-contract area ("typed outputs and machine-readable errors with
+correction/retry guidance"), reviewed with Chrispian ahead of Hadron's port
+-- the first real consumer of this surface, so this is the cheapest point to
+land it. Every portfolio tool already returns JSON; until now that JSON was
+always embedded as text a client had to re-parse, because `ToolHandler`
+could only ever produce a `TextContent` block. This is a breaking change to
+`ToolHandler`, but breaks nothing running in production: no application has
+adopted the `server` package's tool-registration surface yet.
+
+### Changed
+
+- `server` — `ToolHandler` is now `func(ctx, args map[string]any) (any,
+  error)`, was `(string, error)`.
+  - A `string` result is used verbatim as text content, unchanged from
+    before.
+  - Any other value is JSON-marshaled into `CallToolResult.StructuredContent`
+    (per SEP-2106) *and* mirrored as JSON text content, so a client reading
+    either gets the same data. A marshal failure is reported as a
+    protocol-level error (`ErrCodeInternal`), not folded into tool result
+    content -- it's go-mcp's own inability to serialize what the tool
+    produced, not a tool-execution failure.
+  - A returned `*budget.ToolError` (see below) keeps its full structured
+    shape in StructuredContent instead of being collapsed to
+    `err.Error()`. Any other error is reported exactly as before: its
+    plain `Error()` string, `IsError=true`, no StructuredContent.
+  - `Server.CallTool` (the direct in-process/test path) now returns `(any,
+    error)` to match, returning the handler's raw value unconverted.
+- `Tool` gains `Title` (optional display name) and `OutputSchema` (optional
+  JSON Schema for the StructuredContent shape) -- both direct official-SDK
+  `Tool` fields that were previously dropped. `ToolDefinition` carries both
+  through too.
+- `budget.ToolError` is now a struct (`Code`, `Message`, `Field`,
+  `Retryable`, `NextStep`, `HelpTool`), implementing `error`, built with
+  `NewToolError(code, message)` and `With*` chain methods -- was a function
+  returning a bare `{"error","message"}` JSON string (a key-name mismatch
+  with `ProtocolError`'s `{"code","message","data"}`, fixed along the way).
+  The point of the new fields: the caller already knows the error and its
+  context, so giving the calling agent a concrete next step -- not just
+  what went wrong -- costs nothing extra. `NextStep` is where that goes.
+- `budget.ToolJSON` is unchanged, but is now the secondary path: prefer
+  returning a value directly from a `ToolHandler` over pre-marshaling it,
+  since only the former gets StructuredContent.
+
+### Notes
+
+- This does not touch the tool-contract area's other, still-draft
+  requirements (cursor pagination, bulk partial-success, stable
+  action-oriented naming, retired-argument guidance) -- those remain under
+  portfolio review, not adopted here.
+
 ## v0.3.2 — 2026-09-18
 
 Per `project/atlas/knowledge/mcp-acp-shared-contract-and-adoption-notes`:

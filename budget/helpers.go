@@ -32,24 +32,16 @@ func ExtractPagination(params map[string]any) (limit, offset int) {
 	return limit, offset
 }
 
-// ToolJSON marshals v to a JSON string suitable for MCP tool responses.
-// On marshal failure it returns a JSON error object.
+// ToolJSON marshals v to a JSON string. Retained for callers building their
+// own text content by hand; a server.ToolHandler returning v directly gets
+// this -- and a StructuredContent field carrying the typed value, not just
+// its text rendering -- automatically. On marshal failure it returns a JSON
+// error object.
 func ToolJSON(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Sprintf(`{"error":"marshal_failed","message":%q}`, err.Error())
 	}
-	return string(data)
-}
-
-// ToolError returns a JSON error response string with the given code and
-// message. Callers wrap this in their MCP framework's error response type.
-func ToolError(code, message string) string {
-	resp := map[string]string{
-		"error":   code,
-		"message": message,
-	}
-	data, _ := json.Marshal(resp)
 	return string(data)
 }
 

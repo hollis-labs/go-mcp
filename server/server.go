@@ -28,10 +28,24 @@ const ProtocolVersion = "2026-07-28"
 var ErrUnknownTool = errors.New("unknown tool")
 
 // ToolHandler implements a tool's behavior. args is the tool call's
-// arguments, decoded from JSON into a map. The returned string becomes the
-// tool result's text content; a returned error is reported to the caller as
-// error content (CallToolResult.IsError), not as a protocol-level error.
-type ToolHandler func(ctx context.Context, args map[string]any) (string, error)
+// arguments, decoded from JSON into a map.
+//
+// The returned value becomes the tool result. A string is used verbatim as
+// the result's text content -- for a tool whose natural output really is
+// prose. Anything else is JSON-marshaled into CallToolResult.StructuredContent
+// (per SEP-2106) *and* mirrored as JSON text content, so both a client
+// reading typed structured output and one that only renders text content
+// get the same data. Most tools should return a map, struct, or slice, not
+// a pre-marshaled JSON string: marshaling it themselves (e.g. via
+// budget.ToolJSON) produces a *string*, which this contract treats as
+// opaque prose and never promotes to StructuredContent.
+//
+// A returned *budget.ToolError is reported as error content
+// (CallToolResult.IsError) with its full structured shape -- code, field,
+// retryable, next step, help tool -- preserved in StructuredContent, not
+// collapsed to a bare message. Any other error is reported as error content
+// with just its Error() string.
+type ToolHandler func(ctx context.Context, args map[string]any) (any, error)
 
 // Tool describes a tool registration.
 //
@@ -45,6 +59,17 @@ type Tool struct {
 	Description string
 	InputSchema any
 	Handler     ToolHandler
+
+	// Title is an optional human-readable display name, distinct from Name
+	// (which is for programmatic/logical use). Display-name precedence is
+	// Title, then a client-side annotations title, then Name.
+	Title string
+	// OutputSchema optionally declares the JSON Schema that the handler's
+	// StructuredContent result conforms to (see ToolHandler). Leave nil for
+	// a tool whose output shape isn't worth committing to a schema yet --
+	// StructuredContent is still populated either way. EmptyObjectSchema
+	// and ObjectSchema work here exactly as they do for InputSchema.
+	OutputSchema any
 
 	// ReadOnlyHint reports whether the tool only reads, never modifying its
 	// environment.
@@ -73,10 +98,12 @@ type ToolAnnotations struct {
 
 // ToolDefinition is a tool's public shape, as returned by ToolDefinitions.
 type ToolDefinition struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema any             `json:"inputSchema"`
-	Annotations ToolAnnotations `json:"annotations"`
+	Name         string          `json:"name"`
+	Title        string          `json:"title,omitempty"`
+	Description  string          `json:"description"`
+	InputSchema  any             `json:"inputSchema"`
+	OutputSchema any             `json:"outputSchema,omitempty"`
+	Annotations  ToolAnnotations `json:"annotations"`
 }
 
 // Server wraps an official-SDK *mcpsdk.Server, adding go-mcp's
@@ -212,10 +239,12 @@ func (s *Server) RegisterTool(t Tool) {
 
 	s.mu.Lock()
 	s.defs[t.Name] = ToolDefinition{
-		Name:        t.Name,
-		Description: t.Description,
-		InputSchema: t.InputSchema,
-		Annotations: annotations,
+		Name:         t.Name,
+		Title:        t.Title,
+		Description:  t.Description,
+		InputSchema:  t.InputSchema,
+		OutputSchema: t.OutputSchema,
+		Annotations:  annotations,
 	}
 	s.handlers[t.Name] = t.Handler
 	s.mu.Unlock()
@@ -223,9 +252,11 @@ func (s *Server) RegisterTool(t Tool) {
 	destructive := t.DestructiveHint
 	openWorld := t.OpenWorldHint
 	sdkTool := &mcpsdk.Tool{
-		Name:        t.Name,
-		Description: t.Description,
-		InputSchema: t.InputSchema,
+		Name:         t.Name,
+		Title:        t.Title,
+		Description:  t.Description,
+		InputSchema:  t.InputSchema,
+		OutputSchema: t.OutputSchema,
 		Annotations: &mcpsdk.ToolAnnotations{
 			ReadOnlyHint: t.ReadOnlyHint,
 			// Always set explicitly (never left nil): the SDK defaults an
@@ -254,16 +285,19 @@ func (s *Server) ToolDefinitions() []ToolDefinition {
 }
 
 // CallTool invokes a registered tool's handler directly, in-process,
-// bypassing the MCP protocol layer. It is intended for direct programmatic
+// bypassing the MCP protocol layer, and returns its raw result value
+// unconverted -- a string as a string, anything else as the Go value the
+// handler returned, not JSON text. It is intended for direct programmatic
 // use and tests. RPC callers are served through the wrapped SDK server, via
-// Run or an HTTP transport, which additionally attach resultType, cache and
-// annotation metadata that this direct path does not.
-func (s *Server) CallTool(ctx context.Context, name string, args map[string]any) (string, error) {
+// Run or an HTTP transport, which additionally attach resultType, cache,
+// annotation metadata, and the StructuredContent/text-content split that
+// this direct path does not.
+func (s *Server) CallTool(ctx context.Context, name string, args map[string]any) (any, error) {
 	s.mu.RLock()
 	h, ok := s.handlers[name]
 	s.mu.RUnlock()
 	if !ok {
-		return "", ErrUnknownTool
+		return nil, ErrUnknownTool
 	}
 	return h(ctx, args)
 }
@@ -276,10 +310,11 @@ func (s *Server) Run(ctx context.Context) error {
 
 // adaptHandler wraps a go-mcp ToolHandler as an official-SDK raw ToolHandler:
 // it decodes arguments, installs a Notifier bridged to the client session,
-// and maps the (string, error) result onto a CallToolResult. Cancellation
-// (notifications/cancelled) and resultType (the MRTR complete/input_required
-// pattern) are handled by the SDK's own dispatch and are not this
-// function's concern.
+// and maps the (any, error) result onto a CallToolResult -- see ToolHandler
+// for exactly how a string, a structured value, and a *budget.ToolError
+// each land there. Cancellation (notifications/cancelled) and resultType
+// (the MRTR complete/input_required pattern) are handled by the SDK's own
+// dispatch and are not this function's concern.
 func adaptHandler(name string, h ToolHandler) mcpsdk.ToolHandler {
 	return func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		var args map[string]any
@@ -298,21 +333,52 @@ func adaptHandler(name string, h ToolHandler) mcpsdk.ToolHandler {
 
 		handlerCtx := WithNotifier(ctx, sessionNotifier(ctx, req.Session))
 
-		text, err := h(handlerCtx, args)
+		result, err := h(handlerCtx, args)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		if err != nil {
+			var toolErr *budget.ToolError
+			if errors.As(err, &toolErr) {
+				return marshaledResult(name, toolErr, true)
+			}
 			return &mcpsdk.CallToolResult{
 				Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: err.Error()}},
 				IsError: true,
 			}, nil
 		}
 
-		return &mcpsdk.CallToolResult{
-			Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: text}},
-		}, nil
+		if result == nil {
+			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{}}, nil
+		}
+		if text, ok := result.(string); ok {
+			return &mcpsdk.CallToolResult{
+				Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: text}},
+			}, nil
+		}
+		return marshaledResult(name, result, false)
 	}
+}
+
+// marshaledResult JSON-marshals a non-string tool result (a success value or
+// a *budget.ToolError) into both StructuredContent (the typed value, per
+// SEP-2106) and a mirrored JSON-text Content block, so a client reading
+// either gets the same data. A marshal failure here is go-mcp's own
+// inability to serialize what the tool produced -- a protocol-level failure,
+// not a tool-execution error -- so it is reported as a JSON-RPC error rather
+// than folded into result content.
+func marshaledResult(name string, v any, isError bool) (*mcpsdk.CallToolResult, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		protoErr := budget.NewProtocolError(budget.ErrCodeInternal,
+			fmt.Sprintf("tool %q: marshal result: %v", name, err), nil)
+		return nil, &jsonrpc.Error{Code: int64(protoErr.Code), Message: protoErr.Message}
+	}
+	return &mcpsdk.CallToolResult{
+		Content:           []mcpsdk.Content{&mcpsdk.TextContent{Text: string(data)}},
+		StructuredContent: v,
+		IsError:           isError,
+	}, nil
 }
 
 // sessionNotifier bridges go-mcp's context-installed Notifier to the

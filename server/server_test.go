@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"testing"
@@ -112,7 +113,7 @@ func TestToolCallRoundTrip(t *testing.T) {
 		Description:  "echo",
 		InputSchema:  ObjectSchema(map[string]any{"text": map[string]any{"type": "string"}}, "text"),
 		ReadOnlyHint: true,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			return args["text"].(string), nil
 		},
 	})
@@ -141,7 +142,7 @@ func TestToolCallHandlerErrorReportedAsContent(t *testing.T) {
 		Description:  "always fails",
 		InputSchema:  EmptyObjectSchema(),
 		ReadOnlyHint: true,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			return "", errors.New("boom")
 		},
 	})
@@ -170,7 +171,7 @@ func TestToolCallCancellationPropagatesToHandler(t *testing.T) {
 		Description:  "block",
 		InputSchema:  EmptyObjectSchema(),
 		ReadOnlyHint: true,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			close(started)
 			<-ctx.Done()
 			close(canceled)
@@ -218,7 +219,7 @@ func TestToolCallMalformedArgumentsReportsProtocolError(t *testing.T) {
 		Description:  "echo",
 		InputSchema:  EmptyObjectSchema(),
 		ReadOnlyHint: true,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			return "unreachable", nil
 		},
 	})
@@ -249,7 +250,7 @@ func TestCallToolDirectBypassesProtocol(t *testing.T) {
 		Description:  "echo",
 		InputSchema:  EmptyObjectSchema(),
 		ReadOnlyHint: true,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			return "direct", nil
 		},
 	})
@@ -293,7 +294,7 @@ func TestNotificationsForwardedToClientSession(t *testing.T) {
 		Description:  "notify",
 		InputSchema:  EmptyObjectSchema(),
 		ReadOnlyHint: true,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			if !NotifyMessage(ctx, "info", "starting") {
 				t.Error("NotifyMessage: no notifier installed on handler ctx")
 			}
@@ -347,7 +348,7 @@ func TestNewServerOptionsPassThrough(t *testing.T) {
 		}),
 	)
 	srv.RegisterTool(Tool{Name: "noop", Description: "noop", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
-		Handler: func(context.Context, map[string]any) (string, error) { return "", nil },
+		Handler: func(context.Context, map[string]any) (any, error) { return "", nil },
 	})
 	srv.SDKServer().AddPrompt(&mcpsdk.Prompt{Name: "greeting"}, func(context.Context, *mcpsdk.GetPromptRequest) (*mcpsdk.GetPromptResult, error) {
 		return &mcpsdk.GetPromptResult{Messages: []*mcpsdk.PromptMessage{}}, nil
@@ -427,7 +428,7 @@ func TestNewServerOptionsCapabilitiesProtocolVersionsAndLogger(t *testing.T) {
 		WithLogger(logger),
 	)
 	srv.RegisterTool(Tool{Name: "noop", Description: "noop", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
-		Handler: func(context.Context, map[string]any) (string, error) { return "", nil },
+		Handler: func(context.Context, map[string]any) (any, error) { return "", nil },
 	})
 
 	cs := connect(t, srv, nil)
@@ -445,5 +446,216 @@ func TestNewServerOptionsCapabilitiesProtocolVersionsAndLogger(t *testing.T) {
 	}
 	if logs.Len() == 0 {
 		t.Fatal("WithLogger: no log output observed after a session connected and closed")
+	}
+}
+
+// TestToolCallStructuredOutput is the headline case ToolHandler's (any,
+// error) signature exists for: a handler returning a Go value (not a
+// pre-marshaled string) must produce BOTH a typed StructuredContent (per
+// SEP-2106) and a mirrored JSON-text Content block, so a client reading
+// either gets the same data.
+func TestToolCallStructuredOutput(t *testing.T) {
+	type workspace struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{
+		Name:         "workspace_get",
+		Description:  "get a workspace",
+		InputSchema:  EmptyObjectSchema(),
+		ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) {
+			return workspace{ID: "ws-1", Name: "default"}, nil
+		},
+	})
+
+	cs := connect(t, srv, nil)
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "workspace_get"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %+v", res.Content)
+	}
+
+	sc, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %#v (%T), want a decoded object", res.StructuredContent, res.StructuredContent)
+	}
+	if sc["id"] != "ws-1" || sc["name"] != "default" {
+		t.Fatalf("unexpected StructuredContent: %+v", sc)
+	}
+
+	text, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] is not text: %#v", res.Content[0])
+	}
+	var fromText workspace
+	if err := json.Unmarshal([]byte(text.Text), &fromText); err != nil {
+		t.Fatalf("Content text is not valid JSON mirroring StructuredContent: %v (%s)", err, text.Text)
+	}
+	if fromText != (workspace{ID: "ws-1", Name: "default"}) {
+		t.Fatalf("Content text disagrees with StructuredContent: %+v", fromText)
+	}
+}
+
+// TestToolCallStringResultStaysPlainText confirms the ToolHandler contract's
+// other half: a handler that returns a plain string (prose, not data) is
+// used verbatim as text content and never promoted to StructuredContent --
+// there is nothing meaningfully "structured" about an opaque string.
+func TestToolCallStringResultStaysPlainText(t *testing.T) {
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{
+		Name:         "greet",
+		Description:  "greet",
+		InputSchema:  EmptyObjectSchema(),
+		ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) {
+			return "hello, agent", nil
+		},
+	})
+
+	cs := connect(t, srv, nil)
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "greet"})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.StructuredContent != nil {
+		t.Fatalf("StructuredContent = %#v, want nil for a plain string result", res.StructuredContent)
+	}
+	text, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok || text.Text != "hello, agent" {
+		t.Fatalf("unexpected content: %#v", res.Content)
+	}
+}
+
+// TestToolCallToolErrorPreservesStructuredShape confirms a *budget.ToolError
+// returned as a handler's error is not collapsed to a bare message: the
+// calling agent gets the full typed shape (code, field, retryable, next
+// step, help tool) in StructuredContent, matching a successful structured
+// result's treatment.
+func TestToolCallToolErrorPreservesStructuredShape(t *testing.T) {
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{
+		Name:         "run_get",
+		Description:  "get a run",
+		InputSchema:  EmptyObjectSchema(),
+		ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) {
+			return nil, budget.NewToolError("not_found", "run RUN-404 not found").
+				WithField("run_id").
+				WithNextStep("call hadron_runs_list to find a valid run_id").
+				WithHelpTool("hadron_runs_list")
+		},
+	})
+
+	cs := connect(t, srv, nil)
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "run_get"})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected IsError = true, got result: %+v", res)
+	}
+
+	sc, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %#v (%T), want the decoded ToolError shape", res.StructuredContent, res.StructuredContent)
+	}
+	if sc["code"] != "not_found" || sc["field"] != "run_id" || sc["nextStep"] == "" || sc["helpTool"] != "hadron_runs_list" {
+		t.Fatalf("ToolError fields lost in StructuredContent: %+v", sc)
+	}
+	if sc["retryable"] != false {
+		t.Fatalf(`sc["retryable"] = %v, want false (always present, not omitted)`, sc["retryable"])
+	}
+
+	text, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok {
+		t.Fatalf("Content[0] is not text: %#v", res.Content[0])
+	}
+	var fromText budget.ToolError
+	if err := json.Unmarshal([]byte(text.Text), &fromText); err != nil {
+		t.Fatalf("Content text is not valid JSON: %v (%s)", err, text.Text)
+	}
+	if fromText.Code != "not_found" || fromText.NextStep == "" {
+		t.Fatalf("Content text disagrees with StructuredContent: %+v", fromText)
+	}
+}
+
+// TestToolCallPlainErrorStaysPlainText confirms an ordinary error (not a
+// *budget.ToolError) keeps today's behavior exactly: just its Error()
+// string in text content, no StructuredContent -- ToolError is opt-in, not
+// a requirement placed on every handler.
+func TestToolCallPlainErrorStaysPlainText(t *testing.T) {
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{
+		Name:         "fail_plain",
+		Description:  "always fails, plainly",
+		InputSchema:  EmptyObjectSchema(),
+		ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) {
+			return nil, errors.New("boom")
+		},
+	})
+
+	cs := connect(t, srv, nil)
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "fail_plain"})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError = true")
+	}
+	if res.StructuredContent != nil {
+		t.Fatalf("StructuredContent = %#v, want nil for a plain error", res.StructuredContent)
+	}
+	text, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok || text.Text != "boom" {
+		t.Fatalf("unexpected error content: %#v", res.Content)
+	}
+}
+
+// TestRegisterToolTitleAndOutputSchemaPassThrough confirms Tool.Title and
+// Tool.OutputSchema -- otherwise-dropped official-SDK Tool fields -- reach
+// both the wire (via ListTools) and the in-process ToolDefinition.
+func TestRegisterToolTitleAndOutputSchemaPassThrough(t *testing.T) {
+	outputSchema := ObjectSchema(map[string]any{"id": map[string]any{"type": "string"}}, "id")
+
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{
+		Name:         "workspace_get",
+		Title:        "Get Workspace",
+		Description:  "get a workspace",
+		InputSchema:  EmptyObjectSchema(),
+		OutputSchema: outputSchema,
+		ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) {
+			return map[string]any{"id": "ws-1"}, nil
+		},
+	})
+
+	cs := connect(t, srv, nil)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(res.Tools) != 1 {
+		t.Fatalf("tool count = %d, want 1", len(res.Tools))
+	}
+	if res.Tools[0].Title != "Get Workspace" {
+		t.Fatalf("Title = %q, want %q", res.Tools[0].Title, "Get Workspace")
+	}
+	if res.Tools[0].OutputSchema == nil {
+		t.Fatal("OutputSchema not declared on wire")
+	}
+
+	defs := srv.ToolDefinitions()
+	if defs[0].Title != "Get Workspace" {
+		t.Fatalf("ToolDefinition.Title = %q, want %q", defs[0].Title, "Get Workspace")
+	}
+	if defs[0].OutputSchema == nil {
+		t.Fatal("ToolDefinition.OutputSchema not set")
 	}
 }

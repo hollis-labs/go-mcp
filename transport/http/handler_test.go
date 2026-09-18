@@ -51,7 +51,7 @@ func TestToolCallOverHTTP(t *testing.T) {
 		Description:  "echo",
 		InputSchema:  gmcp.ObjectSchema(map[string]any{"text": map[string]any{"type": "string"}}, "text"),
 		ReadOnlyHint: true,
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
 			return args["text"].(string), nil
 		},
 	})
