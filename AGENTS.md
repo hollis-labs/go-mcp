@@ -29,6 +29,10 @@ is the pieces that were being rewritten in every server.
   SSE client transport and an explicit legacy protocol-version negotiation
   wrapper. Nothing in `server`/`transport/http`/`auth`/`sanitize` depends on
   this package; it exists only for peers that haven't moved to 2026-07-28.
+- `supervise/` — dependency-free primitives (`Policy` backoff schedule,
+  `ClassifyExit`, `Tail` redacted stderr buffer) for a product's own
+  child-process supervision loop; owns no lifecycle, same boundary as
+  `staleness/`.
 - `docs/http-transport-followups.md` records known gaps in that transport.
 
 ## Commands
@@ -46,9 +50,10 @@ gate.
 
 **No longer stdlib-only overall** — `server`, `transport/http`, `auth`,
 `sanitize` and `compat` depend on `github.com/modelcontextprotocol/go-sdk`
-(the whole point of the SDK-consolidation rewrite). Only `budget` and
-`staleness` remain dependency-free; don't add an SDK import to either without
-a real reason, since that's the one boundary this rewrite deliberately kept.
+(the whole point of the SDK-consolidation rewrite). Only `budget`,
+`staleness`, and `supervise` remain dependency-free; don't add an SDK import
+to any of the three without a real reason, since that's the one boundary
+this rewrite deliberately kept.
 
 `tools/list` output is sorted by name and must stay deterministic —
 `TestToolsListIsSortedByName` and `TestToolsListSorted`. Clients cache and diff

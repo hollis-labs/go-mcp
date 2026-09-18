@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.6.0 — 2026-09-18
+
+### Added
+
+- `supervise` — a new dependency-free package holding the primitives behind
+  Tether's own proactive stdio-upstream supervisor
+  (`internal/mcpadapter/client_pool.go` and `upstream_stdio.go`),
+  generalized for reuse by any product supervising a child process, not
+  only an MCP stdio upstream. `Policy` is a bounded exponential backoff
+  schedule with a stable-for reset window; `ClassifyExit` classifies a
+  process's terminal `os.ProcessState` into clean/error/signal; `Tail` is a
+  bounded, concurrent-safe, redacted stderr ring buffer. Like `staleness`,
+  it owns no lifecycle: it never spawns, signals, waits on, or restarts a
+  process itself -- the caller's own supervision loop reads state from
+  these primitives and decides what to do, per the same ownership boundary
+  ADR `adr_mcp_staleness_detection_ownership` (CW-20260912-0106)
+  established for `staleness`. Tracks CW-20260918-0021.
+
 ## v0.5.0 — 2026-09-18
 
 ### Added
