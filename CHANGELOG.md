@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.4.2 — 2026-09-18
+
+### Added
+
+- `budget` — `StructuredError`, an interface (`error` + `ToolErrorContent()
+  any`) completing v0.4.0's error-contract work for a caller whose error
+  shape doesn't fit `ToolError`'s required fields. Prompted by a real
+  second consumer, mid-port: Hadron's workflow-operation error envelope
+  deliberately omits a human-readable message for data-minimization
+  reasons ("Message text is intentionally not transported"), so it can't
+  satisfy `ToolError.Message`, but still needs StructuredContent+IsError
+  treatment for its own fully custom shape.
+- `server` — `adaptHandler` reports a returned `budget.StructuredError` the
+  same way it reports a `*budget.ToolError`: `ToolErrorContent()`'s value
+  in StructuredContent (and mirrored text), `IsError` set.
+
 ## v0.4.1 — 2026-09-18
 
 ### Added

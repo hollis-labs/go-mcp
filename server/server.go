@@ -43,8 +43,10 @@ var ErrUnknownTool = errors.New("unknown tool")
 // A returned *budget.ToolError is reported as error content
 // (CallToolResult.IsError) with its full structured shape -- code, field,
 // retryable, next step, help tool -- preserved in StructuredContent, not
-// collapsed to a bare message. Any other error is reported as error content
-// with just its Error() string.
+// collapsed to a bare message. A returned budget.StructuredError gets the
+// same treatment via its own custom shape, for an error contract ToolError's
+// fields don't fit. Any other error is reported as error content with just
+// its Error() string.
 type ToolHandler func(ctx context.Context, args map[string]any) (any, error)
 
 // Tool describes a tool registration.
@@ -357,6 +359,10 @@ func adaptHandler(name string, h ToolHandler) mcpsdk.ToolHandler {
 			var toolErr *budget.ToolError
 			if errors.As(err, &toolErr) {
 				return marshaledResult(name, toolErr, true)
+			}
+			var structuredErr budget.StructuredError
+			if errors.As(err, &structuredErr) {
+				return marshaledResult(name, structuredErr.ToolErrorContent(), true)
 			}
 			return &mcpsdk.CallToolResult{
 				Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: err.Error()}},

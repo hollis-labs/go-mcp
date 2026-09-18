@@ -660,6 +660,39 @@ func TestRegisterToolTitleAndOutputSchemaPassThrough(t *testing.T) {
 	}
 }
 
+// customStructuredError implements budget.StructuredError with a shape that
+// deliberately doesn't fit budget.ToolError's fields -- no human-readable
+// message field at all, mirroring a real consumer (Hadron's workflow error
+// envelope) that omits one for data-minimization reasons.
+type customStructuredError struct {
+	Code string
+}
+
+func (e customStructuredError) Error() string         { return "custom: " + e.Code }
+func (e customStructuredError) ToolErrorContent() any { return map[string]string{"error_code": e.Code} }
+
+func TestToolCallStructuredErrorCustomShape(t *testing.T) {
+	srv := NewServer("cerberus", "test")
+	srv.RegisterTool(Tool{Name: "fail_custom", Description: "fail", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (any, error) {
+			return nil, customStructuredError{Code: "policy_denied"}
+		},
+	})
+
+	cs := connect(t, srv, nil)
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "fail_custom"})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError = true")
+	}
+	sc, ok := res.StructuredContent.(map[string]any)
+	if !ok || sc["error_code"] != "policy_denied" {
+		t.Fatalf("StructuredContent = %#v, want the custom shape", res.StructuredContent)
+	}
+}
+
 // TestRemoveToolsIsSymmetricWithRegisterTool covers RemoveTools: a removed
 // tool disappears from both the wire (ListTools) and go-mcp's own
 // bookkeeping (ToolDefinitions, CallTool), not just one or the other.

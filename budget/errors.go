@@ -104,6 +104,20 @@ func (e *ToolError) WithHelpTool(tool string) *ToolError {
 	return e
 }
 
+// StructuredError lets a ToolHandler report a fully custom structured error
+// shape while still getting go-mcp's error-content treatment
+// (StructuredContent populated, IsError set) -- for a caller whose error
+// contract doesn't fit ToolError's fields, for example one that deliberately
+// omits a human-readable message for data-minimization reasons. Prefer
+// ToolError when its fields fit; reach for this only when they genuinely
+// don't.
+type StructuredError interface {
+	error
+	// ToolErrorContent returns the value to marshal into StructuredContent
+	// (and its mirrored text block) in place of err.Error().
+	ToolErrorContent() any
+}
+
 // ProtocolError is a structured, protocol-level MCP error: an app-owned
 // error code, a message, and optional machine-readable data. It implements
 // error, and its fields match the shape MCP transports expect for a

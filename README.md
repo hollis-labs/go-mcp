@@ -119,6 +119,11 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   `WithNextStep`/`WithHelpTool`; a `server.ToolHandler` returning one gets
   its full shape preserved in StructuredContent, not collapsed to a bare
   message (`budget/errors.go`).
+- `StructuredError` — an interface (`error` + `ToolErrorContent() any`) for
+  a caller whose error contract doesn't fit `ToolError`'s fields (for
+  example, one that deliberately omits a human-readable message) but still
+  wants the same StructuredContent+IsError treatment from a
+  `server.ToolHandler` (`budget/errors.go`).
 - `EstimateTokens(payload []byte) int` and `EstimateTokensFromString(s string) int`
   — ~4-chars-per-token heuristic for payload sizing (`budget/tokens.go`).
 - Constants: `DefaultLimit` (10), `MaxLimit` (25), `DefaultMaxTokens` (2000),
