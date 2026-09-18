@@ -159,6 +159,31 @@ func TestSanitize_CRLFSplitReads(t *testing.T) {
 	}
 }
 
+// infiniteReader always returns the same chunk, and never an error --
+// standing in for a server that streams data forever without ever sending a
+// blank-line block terminator.
+type infiniteReader struct{ chunk []byte }
+
+func (r *infiniteReader) Read(p []byte) (int, error) {
+	return copy(p, r.chunk), nil
+}
+
+func TestSanitize_boundsUnterminatedEventBlock(t *testing.T) {
+	// No blank line anywhere in this stream, ever: drainBlocks can never
+	// find a terminator, so partial would grow without bound if nothing
+	// capped it.
+	chunk := []byte(strings.Repeat("x", 4096))
+	r := newSanitizingReader(nopCloser{&infiniteReader{chunk: chunk}}, mustURL(t, "http://h:1/sse"))
+
+	_, err := io.ReadAll(r)
+	if err == nil {
+		t.Fatal("want an error for an unterminated event block that exceeds the cap, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeded") {
+		t.Fatalf("error = %v, want it to mention the cap being exceeded", err)
+	}
+}
+
 func TestSanitize_preservesCRLFOnARepairedEndpoint(t *testing.T) {
 	// The rewriter must not silently convert the server's line endings
 	// mid-stream.

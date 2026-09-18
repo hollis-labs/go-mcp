@@ -2,6 +2,7 @@ package compat
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -37,8 +38,14 @@ import (
 //     wrong place. The authority is rewritten to the one actually dialed;
 //     the path and query are the server's to choose.
 //
-// Both are done at the byte level, in the RoundTripper, because the SDK's
-// SSEClientTransport takes an *http.Client and exposes no other seam.
+// It also bounds how much of one not-yet-terminated event block it will
+// buffer while scanning for the blank-line terminator (maxPartialEventBytes)
+// -- a server that never sends one would otherwise grow that buffer without
+// limit, exhausting memory before the downstream transport's own
+// MaxEventSize cap ever sees a complete block to check.
+//
+// All three are done at the byte level, in the RoundTripper, because the
+// SDK's SSEClientTransport takes an *http.Client and exposes no other seam.
 //
 // httpClient, if non-nil, supplies the base configuration (Timeout,
 // CheckRedirect, cookie jar, ...); only its Transport is wrapped, not
@@ -80,6 +87,21 @@ func isEventStream(resp *http.Response) bool {
 	return err == nil && mediaType == "text/event-stream"
 }
 
+// maxPartialEventBytes bounds how much of one not-yet-terminated SSE event
+// block sanitizingReader will buffer while waiting for its blank-line
+// terminator. Without this, a server that never sends one -- a
+// misbehaving upstream, or a deliberately hostile one -- makes drainBlocks
+// grow partial without limit, exhausting memory before the downstream SDK
+// transport's own MaxEventSize cap ever sees a complete block to check
+// against. This mirrors the same defense Nanite's own eventCapReader
+// applied ahead of its (now-retired) hand-rolled SSE sanitizer, applied
+// here since every caller of this package's transport needs it, not just
+// Nanite. 1 MiB is comfortably larger than any real SSE event line
+// (endpoint/keepalive events are tiny; message events carry one JSON-RPC
+// frame, themselves bounded by the transport's MaxEventSize) while still
+// bounding worst-case memory well below that cap.
+const maxPartialEventBytes = 1024 * 1024
+
 // sanitizingReader adapts an SSE stream to what the MCP SDK's SSE client
 // assumes. See [NewSSEClientTransport] for the two behaviors it corrects.
 type sanitizingReader struct {
@@ -107,6 +129,10 @@ func (r *sanitizingReader) Read(p []byte) (int, error) {
 		if n > 0 {
 			r.partial.Write(buf[:n])
 			r.drainBlocks()
+			if r.partial.Len() > maxPartialEventBytes {
+				r.err = fmt.Errorf("sse: event block exceeded %d bytes without a terminating blank line", maxPartialEventBytes)
+				return 0, r.err
+			}
 		}
 		if err != nil {
 			r.err = err
