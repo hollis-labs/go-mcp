@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -406,5 +408,42 @@ func TestNewServerOptionsInitializedHandlerLegacyHandshakeOnly(t *testing.T) {
 	case <-initialized:
 	case <-time.After(2 * time.Second):
 		t.Fatal("InitializedHandler never fired over the legacy handshake")
+	}
+}
+
+// TestNewServerOptionsCapabilitiesProtocolVersionsAndLogger covers the
+// second, narrower round of Option additions: Capabilities and
+// SupportedProtocolVersions are exact protocol/capability-negotiation
+// contract areas, and Logger is the observability hook -- all three are
+// otherwise unreachable once SDKServer() has already built the underlying
+// *mcpsdk.Server.
+func TestNewServerOptionsCapabilitiesProtocolVersionsAndLogger(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+
+	srv := NewServer("cerberus", "test",
+		WithCapabilities(&mcpsdk.ServerCapabilities{}), // overrides the default {"logging":{}}
+		WithSupportedProtocolVersions([]string{"2025-11-25"}),
+		WithLogger(logger),
+	)
+	srv.RegisterTool(Tool{Name: "noop", Description: "noop", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (string, error) { return "", nil },
+	})
+
+	cs := connect(t, srv, nil)
+
+	ir := cs.InitializeResult()
+	if ir.Capabilities == nil || ir.Capabilities.Logging != nil {
+		t.Fatalf("Capabilities override not applied, or logging still advertised: %+v", ir.Capabilities)
+	}
+	if ir.ProtocolVersion != "2025-11-25" {
+		t.Fatalf("ProtocolVersion = %q, want the sole SupportedProtocolVersions entry %q", ir.ProtocolVersion, "2025-11-25")
+	}
+
+	if err := cs.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if logs.Len() == 0 {
+		t.Fatal("WithLogger: no log output observed after a session connected and closed")
 	}
 }

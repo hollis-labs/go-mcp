@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -136,6 +137,40 @@ func WithCompletionHandler(h func(context.Context, *mcpsdk.CompleteRequest) (*mc
 // has its session closed. Zero (the default) disables keepalive pings.
 func WithKeepAlive(interval time.Duration) Option {
 	return func(o *mcpsdk.ServerOptions) { o.KeepAlive = interval }
+}
+
+// WithKeepAliveFailureThreshold sets how many consecutive keepalive ping
+// failures are tolerated before a session is closed. Has no effect unless
+// WithKeepAlive is also set to a non-zero interval; the official SDK's
+// default (0 or 1) closes a session on the first failure.
+func WithKeepAliveFailureThreshold(n int) Option {
+	return func(o *mcpsdk.ServerOptions) { o.KeepAliveFailureThreshold = n }
+}
+
+// WithCapabilities overrides the server's default advertised capabilities
+// ({"logging":{}} for historical reasons) rather than letting them be
+// inferred from registered tools/prompts/resources and other options. See
+// mcpsdk.ServerOptions.Capabilities for the exact inference rules a
+// non-nil field here overrides.
+func WithCapabilities(caps *mcpsdk.ServerCapabilities) Option {
+	return func(o *mcpsdk.ServerOptions) { o.Capabilities = caps }
+}
+
+// WithSupportedProtocolVersions restricts the MCP protocol versions this
+// server advertises and accepts, narrowing (never widening) the versions
+// the official SDK otherwise supports. Exact protocol-version negotiation
+// is a named MCP contract area: a caller that must speak only a specific
+// version range -- rather than accept whatever the SDK's own default
+// supports -- has no other construction point for it.
+func WithSupportedProtocolVersions(versions []string) Option {
+	return func(o *mcpsdk.ServerOptions) { o.SupportedProtocolVersions = versions }
+}
+
+// WithLogger enables logging of server activity to the given logger.
+// Diagnostics belong off the protocol channel (stderr for stdio, not
+// stdout), which is exactly what a caller-supplied *slog.Logger is for.
+func WithLogger(logger *slog.Logger) Option {
+	return func(o *mcpsdk.ServerOptions) { o.Logger = logger }
 }
 
 // NewServer creates a Server advertising the given name and version. Options

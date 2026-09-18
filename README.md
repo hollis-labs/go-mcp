@@ -127,7 +127,8 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   `*mcp.Server`. `Option` populates the handful of official-SDK
   `ServerOptions` fields that can only be set at construction time and have
   no other way in: `WithInstructions`, `WithInitializedHandler`,
-  `WithCompletionHandler`, `WithKeepAlive`.
+  `WithCompletionHandler`, `WithKeepAlive`, `WithKeepAliveFailureThreshold`,
+  `WithCapabilities`, `WithSupportedProtocolVersions`, `WithLogger`.
 - `RegisterTool` / `ToolDefinitions` / `CallTool` — registration and
   direct, in-process tool invocation (bypassing the protocol layer).
 - `Run(ctx)` — serve over stdio via the official SDK.

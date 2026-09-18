@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.3.2 — 2026-09-18
+
+Per `project/atlas/knowledge/mcp-acp-shared-contract-and-adoption-notes`:
+`Instructions`/`InitializedHandler`/`CompletionHandler` (v0.3.1) fall under
+that note's "initialization/capability negotiation" MCP contract area, which
+it names as shared-library-owned. This release rounds out the rest of that
+same area with the remaining unreached `ServerOptions` fields -- exact
+protocol-version negotiation, capability overrides, and observability --
+using the identical Option mechanism. It stops there: the note's other
+contract areas (tool-definition conventions, cursor pagination, bulk
+partial-success, retired-argument guidance) remain an explicit draft
+profile, not an accepted standard, and are not touched by this release.
+
+### Added
+
+- `server` — four more `Option`s for `NewServer`, all populating
+  otherwise-unreachable `ServerOptions` fields:
+  - `WithKeepAliveFailureThreshold(int)` — pairs with `WithKeepAlive`;
+    consecutive ping failures tolerated before a session is closed.
+  - `WithCapabilities(*mcp.ServerCapabilities)` — overrides the server's
+    default/inferred advertised capabilities.
+  - `WithSupportedProtocolVersions([]string)` — narrows the MCP protocol
+    versions this server advertises and accepts.
+  - `WithLogger(*slog.Logger)` — enables logging of server activity.
+
 ## v0.3.1 — 2026-09-18
 
 Per `CW-20260918-0011`, discovered while porting Hadron (`CW-20260917-0013`)
