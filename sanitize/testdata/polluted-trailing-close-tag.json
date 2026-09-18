@@ -1,0 +1,7 @@
+{
+  "namespace": "user/chrispian/memory",
+  "memory_key": "decisions.test.trailing_close_tag",
+  "payload_summary": "Pattern 1 fixture — payload_summary ends with a self-named close tag and nothing else.\n\n</payload_summary>",
+  "payload_body": "Clean body content for pattern 1.",
+  "tags": ["decision", "test"]
+}

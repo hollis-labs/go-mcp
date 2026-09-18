@@ -1,0 +1,7 @@
+{
+  "namespace": "user/chrispian/memory",
+  "memory_key": "decisions.test.clean_call",
+  "payload_summary": "A perfectly-formed tool call. No leaked markup. Nothing to clean.",
+  "payload_body": "## Decision\n\nThis is a clean payload body. Markdown headings and emphasis are fine.\n\n- Bullet one\n- Bullet two\n",
+  "tags": ["decision", "clean", "control"]
+}
