@@ -24,14 +24,18 @@ module currently exposes:
 - `compat` — isolated backward-compat adapters for peers that don't speak
   2026-07-28 yet; currently an SSE client transport for the legacy
   2024-11-05 transport
+- `supervise` — pure primitives for a product's own child-process
+  supervision loop: a bounded backoff schedule, an exit classifier, and a
+  redacted stderr tail
 
 ## Status
 
-Pre-1.0. The `budget`, `server`, `client`, `transport/http`, `auth`, and
-`compat` packages are tested and usable, but the module is still being
-shaped around real app adoption. Every package except `budget` and
-`staleness` depends on `github.com/modelcontextprotocol/go-sdk`; those two
-remain stdlib-only. See [`CHANGELOG.md`](./CHANGELOG.md) for release notes.
+Pre-1.0. The `budget`, `server`, `client`, `transport/http`, `auth`,
+`compat`, and `supervise` packages are tested and usable, but the module is
+still being shaped around real app adoption. Only `budget`, `staleness`, and
+`supervise` are stdlib-only; every other package depends on
+`github.com/modelcontextprotocol/go-sdk`. See [`CHANGELOG.md`](./CHANGELOG.md)
+for release notes.
 
 ## Install
 
@@ -42,6 +46,7 @@ go get github.com/hollis-labs/go-mcp/client
 go get github.com/hollis-labs/go-mcp/transport/http
 go get github.com/hollis-labs/go-mcp/auth
 go get github.com/hollis-labs/go-mcp/compat
+go get github.com/hollis-labs/go-mcp/supervise
 ```
 
 ## Quickstart
@@ -275,6 +280,31 @@ An observation is point-in-time evidence. It neither reserves a future exec nor
 proves that OS policy will permit one. No exit, signal, retry, admission or drain
 behavior is included.
 
+### Child-process supervision
+
+`github.com/hollis-labs/go-mcp/supervise` holds the primitives Tether's own
+proactive stdio-upstream supervisor was built from, generalized for reuse.
+Like `staleness`, it is dependency-free and owns no lifecycle: it never spawns
+a process, calls `os.Exit`, sends a signal, or restarts anything. The
+caller's own supervision loop reads state from these primitives and acts on
+it.
+
+- `Policy` — a bounded exponential backoff schedule (`Delays`) plus a
+  continuous-uptime window (`StableFor`) after which the caller's restart
+  counter should reset. `DefaultPolicy()` returns Tether's own schedule
+  (1s/2s/4s/8s/16s, reset after 1 minute stable). `Next(attempt)` returns the
+  delay for a zero-based restart attempt, or `false` once the policy is
+  exhausted; `Limit()` is the restart count it allows.
+- `ClassifyExit(state *os.ProcessState, at time.Time) Exit` — classifies a
+  process's terminal `os.ProcessState` (captured right after `Wait` returns)
+  into `Clean`, `Error`, or `Signal`, with the exit code and (on a
+  platform that reports one) the signal name.
+- `Tail` — a bounded, concurrent-safe ring buffer for a process's stderr,
+  assignable directly to `exec.Cmd.Stderr`. `String()` returns the retained
+  window with every configured `Secrets` value redacted, including a secret
+  split across the window's edge by a mid-stream read. `Redact(original,
+  secrets)` is the underlying pure string-redaction function.
+
 ## Notes
 
 - `Config.MaxBytes` and `Config.MaxTokens` are accepted by `Apply` but are
@@ -284,8 +314,8 @@ behavior is included.
 
 ## Dependencies
 
-`budget` and `staleness` use only the Go standard library. `server`,
-`client`, `transport/http`, `auth`, and `compat` depend on
+`budget`, `staleness`, and `supervise` use only the Go standard library.
+`server`, `client`, `transport/http`, `auth`, and `compat` depend on
 [`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)
 (and its transitive dependencies), which they wrap.
 
