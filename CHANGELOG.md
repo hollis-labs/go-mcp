@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+Per `CW-20260918-0011`, discovered while porting Hadron (`CW-20260917-0013`)
+onto v0.3.0: `NewServer` hardcoded the official SDK's `ServerOptions` to
+`nil`, and `ServerOptions` can only be set at `mcp.NewServer` construction
+time — there was no way to set `Instructions`, a completion handler, or
+other such fields at all.
+
+### Added
+
+- `server` — `NewServer(name, version, ...Option)`: a variadic `Option`
+  parameter (backward compatible with existing two-argument calls) that
+  populates the underlying official-SDK `ServerOptions`.
+  - `WithInstructions(string)` — free-text instructions advertised to
+    connecting clients.
+  - `WithInitializedHandler(func(context.Context, *mcp.InitializedRequest))`
+    — fires on `notifications/initialized`. Legacy-handshake-only: a
+    2026-07-28 client opens with the stateless `server/discover` RPC
+    (SEP-2575) and never sends this notification, so the handler never
+    fires over that path.
+  - `WithCompletionHandler(func(context.Context, *mcp.CompleteRequest) (*mcp.CompleteResult, error))`
+    — serves `completion/complete` for prompt/resource-template argument
+    completion.
+  - `WithKeepAlive(time.Duration)` — periodic ping interval; an
+    unresponsive peer's session is closed.
+
+### Notes
+
+- Prompts, resources, and session lifecycle remain intentionally unwrapped.
+  `SDKServer()` already exposes the underlying `*mcp.Server` for
+  `AddPrompt`/`AddResource`/`AddResourceTemplate` and for driving sessions
+  directly (`SDKServer().Connect` returns the `*mcp.ServerSession`
+  synchronously as "session registered"; `ServerSession.Wait` blocks until
+  it closes, as "session unregistered") — see the README's `server` section.
+
 ## v0.3.0 — 2026-09-18
 
 Per `adr_go-mcp-official-sdk-consolidation`: go-mcp's core is rebuilt on the

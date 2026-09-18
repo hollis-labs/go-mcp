@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/hollis-labs/go-mcp/budget"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -90,10 +91,62 @@ type Server struct {
 	handlers map[string]ToolHandler
 }
 
-// NewServer creates a Server advertising the given name and version.
-func NewServer(name, version string) *Server {
+// Option configures the official SDK's mcpsdk.ServerOptions at construction
+// time, via NewServer. Options exist because mcpsdk.ServerOptions can only be
+// supplied when the underlying *mcpsdk.Server is built -- there is no way to
+// retrofit them onto one returned by SDKServer afterward.
+//
+// go-mcp intentionally does not wrap prompts, resources, or session
+// lifecycle: SDKServer returns the underlying *mcpsdk.Server, and callers
+// drive AddPrompt, AddResource, AddResourceTemplate, and session iteration
+// (Sessions, ServerSession.Wait as the unregister-equivalent) directly
+// against it. Options exists only to unblock the handful of ServerOptions
+// fields -- Instructions, InitializedHandler, CompletionHandler, and so on --
+// that have no other construction point.
+type Option func(*mcpsdk.ServerOptions)
+
+// WithInstructions sets the free-text instructions advertised to connecting
+// clients during initialize.
+func WithInstructions(instructions string) Option {
+	return func(o *mcpsdk.ServerOptions) { o.Instructions = instructions }
+}
+
+// WithInitializedHandler installs a callback invoked when a session sends
+// "notifications/initialized". This is NOT a general "session registered"
+// hook: a 2026-07-28 client opens with the stateless server/discover RPC
+// (SEP-2575) and never sends this notification at all, so the handler never
+// fires over that path. It fires only over the legacy initialize/initialized
+// handshake, kept for interop with pre-2026-07-28 peers. Code that needs to
+// react to every new session, regardless of handshake style, should call
+// SDKServer().Connect directly -- it returns the *mcpsdk.ServerSession
+// synchronously as the connection is established -- and use
+// ServerSession.Wait for the unregister-equivalent.
+func WithInitializedHandler(h func(context.Context, *mcpsdk.InitializedRequest)) Option {
+	return func(o *mcpsdk.ServerOptions) { o.InitializedHandler = h }
+}
+
+// WithCompletionHandler installs the server's "completion/complete" handler,
+// serving argument-completion suggestions for prompts and resource
+// templates.
+func WithCompletionHandler(h func(context.Context, *mcpsdk.CompleteRequest) (*mcpsdk.CompleteResult, error)) Option {
+	return func(o *mcpsdk.ServerOptions) { o.CompletionHandler = h }
+}
+
+// WithKeepAlive sets a regular ping interval; a peer that stops responding
+// has its session closed. Zero (the default) disables keepalive pings.
+func WithKeepAlive(interval time.Duration) Option {
+	return func(o *mcpsdk.ServerOptions) { o.KeepAlive = interval }
+}
+
+// NewServer creates a Server advertising the given name and version. Options
+// populate the underlying official-SDK ServerOptions; see Option.
+func NewServer(name, version string, opts ...Option) *Server {
+	var so mcpsdk.ServerOptions
+	for _, opt := range opts {
+		opt(&so)
+	}
 	return &Server{
-		sdk:      mcpsdk.NewServer(&mcpsdk.Implementation{Name: name, Version: version}, nil),
+		sdk:      mcpsdk.NewServer(&mcpsdk.Implementation{Name: name, Version: version}, &so),
 		name:     name,
 		version:  version,
 		defs:     make(map[string]ToolDefinition),

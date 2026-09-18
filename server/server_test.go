@@ -327,3 +327,84 @@ func TestNotificationsForwardedToClientSession(t *testing.T) {
 		t.Fatalf("unexpected progress notifications: %+v", gotProgress)
 	}
 }
+
+// TestNewServerOptionsPassThrough exercises Option's only reason to exist:
+// mcpsdk.ServerOptions can be set solely at mcpsdk.NewServer time, so
+// Instructions and CompletionHandler must flow through go-mcp's NewServer
+// rather than being set on the *mcpsdk.Server SDKServer returns.
+//
+// Instructions and CompletionHandler are exercised over the default
+// (2026-07-28, stateless server/discover) path. WithInitializedHandler is
+// exercised separately, over a forced legacy handshake -- see
+// TestNewServerOptionsInitializedHandlerLegacyHandshakeOnly for why.
+func TestNewServerOptionsPassThrough(t *testing.T) {
+	srv := NewServer("cerberus", "test",
+		WithInstructions("call hadron_skills first"),
+		WithCompletionHandler(func(_ context.Context, req *mcpsdk.CompleteRequest) (*mcpsdk.CompleteResult, error) {
+			return &mcpsdk.CompleteResult{Completion: mcpsdk.CompletionResultDetails{Values: []string{"suggested"}}}, nil
+		}),
+	)
+	srv.RegisterTool(Tool{Name: "noop", Description: "noop", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
+		Handler: func(context.Context, map[string]any) (string, error) { return "", nil },
+	})
+	srv.SDKServer().AddPrompt(&mcpsdk.Prompt{Name: "greeting"}, func(context.Context, *mcpsdk.GetPromptRequest) (*mcpsdk.GetPromptResult, error) {
+		return &mcpsdk.GetPromptResult{Messages: []*mcpsdk.PromptMessage{}}, nil
+	})
+
+	cs := connect(t, srv, nil)
+
+	if got := cs.InitializeResult().Instructions; got != "call hadron_skills first" {
+		t.Fatalf("Instructions = %q, want %q", got, "call hadron_skills first")
+	}
+
+	res, err := cs.Complete(context.Background(), &mcpsdk.CompleteParams{
+		Ref:      &mcpsdk.CompleteReference{Type: "ref/prompt", Name: "greeting"},
+		Argument: mcpsdk.CompleteParamsArgument{Name: "name"},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(res.Completion.Values) != 1 || res.Completion.Values[0] != "suggested" {
+		t.Fatalf("unexpected completion result: %+v", res.Completion)
+	}
+}
+
+// TestNewServerOptionsInitializedHandlerLegacyHandshakeOnly documents and
+// verifies a real protocol-path gap discovered while writing this test: a
+// client that speaks 2026-07-28 opens with the stateless server/discover RPC
+// (SEP-2575) and never sends "notifications/initialized" at all, so
+// InitializedHandler never fires on that path. It only fires over the legacy
+// initialize/initialized handshake, forced here via ProtocolVersion. It is
+// NOT a usable "session registered" hook for a 2026-07-28-first server --
+// callers needing one should use SDKServer().Connect directly (which returns
+// the *mcpsdk.ServerSession synchronously) and ServerSession.Wait for the
+// unregister-equivalent, instead of relying on this handler.
+func TestNewServerOptionsInitializedHandlerLegacyHandshakeOnly(t *testing.T) {
+	initialized := make(chan struct{}, 1)
+	srv := NewServer("cerberus", "test",
+		WithInitializedHandler(func(context.Context, *mcpsdk.InitializedRequest) {
+			initialized <- struct{}{}
+		}),
+	)
+
+	ctx := context.Background()
+	serverTransport, clientTransport := mcpsdk.NewInMemoryTransports()
+	ss, err := srv.SDKServer().Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	cs, err := client.Connect(ctx, clientTransport, &mcpsdk.ClientSessionOptions{ProtocolVersion: "2025-11-25"})
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	select {
+	case <-initialized:
+	case <-time.After(2 * time.Second):
+		t.Fatal("InitializedHandler never fired over the legacy handshake")
+	}
+}

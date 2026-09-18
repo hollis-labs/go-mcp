@@ -123,18 +123,34 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   name (`server/server.go`).
 - `ToolHandler` — `func(ctx, args map[string]any) (string, error)`, go-mcp's
   simplified handler signature, unchanged across the v2 rewrite.
-- `NewServer(name, version)` — wraps an official-SDK `*mcp.Server`.
+- `NewServer(name, version, ...Option)` — wraps an official-SDK
+  `*mcp.Server`. `Option` populates the handful of official-SDK
+  `ServerOptions` fields that can only be set at construction time and have
+  no other way in: `WithInstructions`, `WithInitializedHandler`,
+  `WithCompletionHandler`, `WithKeepAlive`.
 - `RegisterTool` / `ToolDefinitions` / `CallTool` — registration and
   direct, in-process tool invocation (bypassing the protocol layer).
 - `Run(ctx)` — serve over stdio via the official SDK.
 - `SDKServer()` — the underlying `*mcp.Server`, for transports (like
-  `transport/http`) that need to drive it directly.
+  `transport/http`) that need to drive it directly, and for prompts,
+  resources, and session lifecycle, which go-mcp does not wrap (see below).
 - `EmptyObjectSchema` and `ObjectSchema` — strict JSON object schema helpers.
 - `WithNotifier` / `Notify` / `NotifyProgress` / `NotifyMessage` — a
   context-installed notification sink; handlers registered via
   `RegisterTool` have one bridged to the real client session automatically.
 - Cancellation (`notifications/cancelled`) and deterministic `tools/list`
   ordering are inherited from the official SDK.
+- **Prompts, resources, and session lifecycle are not wrapped**, by design:
+  `SDKServer()` returns the underlying `*mcp.Server`, and callers drive
+  `AddPrompt`, `AddResource`/`AddResourceTemplate`, and session tracking
+  directly against it. For "a new session started" / "a session ended",
+  call `SDKServer().Connect` yourself instead of `Run` — it returns the
+  `*mcp.ServerSession` synchronously as the connection is established, and
+  `ServerSession.Wait` blocks until it closes. `WithInitializedHandler`
+  is not a substitute: a 2026-07-28 client opens with the stateless
+  `server/discover` RPC (SEP-2575) and never sends
+  `notifications/initialized`, so that handler only fires over a legacy
+  pre-2026-07-28 handshake.
 
 `github.com/hollis-labs/go-mcp/transport/http`
 
