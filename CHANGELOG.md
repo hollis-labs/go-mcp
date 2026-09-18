@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.3.0 — 2026-09-18
 
 Per `adr_go-mcp-official-sdk-consolidation`: go-mcp's core is rebuilt on the
 official `github.com/modelcontextprotocol/go-sdk`, targeting the 2026-07-28
@@ -67,6 +67,17 @@ MCP specification directly. This is a breaking change to `server` and
   in isolation against the SDK alone with no go-mcp code involved.
   `notifications/progress` was unaffected. Not a go-mcp defect; worth
   knowing if a consumer leans on server-side logging notifications.
+- Known issue: `compat.TestNewSSEClientTransport_EndToEnd` fails
+  deterministically at release time (`Read: context deadline exceeded`) —
+  the endpoint-rewrite/keepalive path in `compat/sse.go` does not surface
+  the real message. `compat` is the optional backward-compat package (not
+  needed by any current-phase adopter); tracked as a follow-up on
+  `CW-20260917-0032` rather than holding this release.
+- `govulncheck ./...` at release time reports stdlib vulnerabilities
+  (GO-2026-4918, GO-2026-4870, GO-2026-4866, and others) fixed in
+  go1.26.2/go1.26.3; this toolchain is pinned at go1.26.1 portfolio-wide.
+  A toolchain bump is a portfolio-level change, not a go-mcp code fix, and
+  is out of scope for this release.
 
 ## v0.2.0 — 2026-05-24
 
