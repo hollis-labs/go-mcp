@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.3.1 — 2026-09-18
 
 Per `CW-20260918-0011`, discovered while porting Hadron (`CW-20260917-0013`)
 onto v0.3.0: `NewServer` hardcoded the official SDK's `ServerOptions` to
