@@ -1,8 +1,3 @@
-// Package server is a thin wrapper around the official MCP Go SDK
-// (github.com/modelcontextprotocol/go-sdk), targeting the 2026-07-28 MCP
-// specification. It adds go-mcp's simplified tool-registration surface: an
-// untyped handler signature, and a required typed tool-annotation contract
-// (rather than annotations left optional or inferred from a tool's name).
 package server
 
 import (
@@ -11,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/hollis-labs/go-mcp/budget"
+	"github.com/hollis-labs/go-mcp/sanitize"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -116,7 +113,10 @@ type Server struct {
 	name    string
 	version string
 
+	cfg options
+
 	mu       sync.RWMutex
+	regErrs  []error
 	defs     map[string]ToolDefinition
 	handlers map[string]ToolHandler
 }
@@ -133,12 +133,12 @@ type Server struct {
 // against it. Options exists only to unblock the handful of ServerOptions
 // fields -- Instructions, InitializedHandler, CompletionHandler, and so on --
 // that have no other construction point.
-type Option func(*mcpsdk.ServerOptions)
+type Option func(*options)
 
 // WithInstructions sets the free-text instructions advertised to connecting
 // clients during initialize.
 func WithInstructions(instructions string) Option {
-	return func(o *mcpsdk.ServerOptions) { o.Instructions = instructions }
+	return func(o *options) { o.sdk.Instructions = instructions }
 }
 
 // WithInitializedHandler installs a callback invoked when a session sends
@@ -152,20 +152,20 @@ func WithInstructions(instructions string) Option {
 // synchronously as the connection is established -- and use
 // ServerSession.Wait for the unregister-equivalent.
 func WithInitializedHandler(h func(context.Context, *mcpsdk.InitializedRequest)) Option {
-	return func(o *mcpsdk.ServerOptions) { o.InitializedHandler = h }
+	return func(o *options) { o.sdk.InitializedHandler = h }
 }
 
 // WithCompletionHandler installs the server's "completion/complete" handler,
 // serving argument-completion suggestions for prompts and resource
 // templates.
 func WithCompletionHandler(h func(context.Context, *mcpsdk.CompleteRequest) (*mcpsdk.CompleteResult, error)) Option {
-	return func(o *mcpsdk.ServerOptions) { o.CompletionHandler = h }
+	return func(o *options) { o.sdk.CompletionHandler = h }
 }
 
 // WithKeepAlive sets a regular ping interval; a peer that stops responding
 // has its session closed. Zero (the default) disables keepalive pings.
 func WithKeepAlive(interval time.Duration) Option {
-	return func(o *mcpsdk.ServerOptions) { o.KeepAlive = interval }
+	return func(o *options) { o.sdk.KeepAlive = interval }
 }
 
 // WithKeepAliveFailureThreshold sets how many consecutive keepalive ping
@@ -173,7 +173,7 @@ func WithKeepAlive(interval time.Duration) Option {
 // WithKeepAlive is also set to a non-zero interval; the official SDK's
 // default (0 or 1) closes a session on the first failure.
 func WithKeepAliveFailureThreshold(n int) Option {
-	return func(o *mcpsdk.ServerOptions) { o.KeepAliveFailureThreshold = n }
+	return func(o *options) { o.sdk.KeepAliveFailureThreshold = n }
 }
 
 // WithCapabilities overrides the server's default advertised capabilities
@@ -182,7 +182,7 @@ func WithKeepAliveFailureThreshold(n int) Option {
 // mcpsdk.ServerOptions.Capabilities for the exact inference rules a
 // non-nil field here overrides.
 func WithCapabilities(caps *mcpsdk.ServerCapabilities) Option {
-	return func(o *mcpsdk.ServerOptions) { o.Capabilities = caps }
+	return func(o *options) { o.sdk.Capabilities = caps }
 }
 
 // WithSupportedProtocolVersions restricts the MCP protocol versions this
@@ -192,27 +192,49 @@ func WithCapabilities(caps *mcpsdk.ServerCapabilities) Option {
 // version range -- rather than accept whatever the SDK's own default
 // supports -- has no other construction point for it.
 func WithSupportedProtocolVersions(versions []string) Option {
-	return func(o *mcpsdk.ServerOptions) { o.SupportedProtocolVersions = versions }
+	return func(o *options) { o.sdk.SupportedProtocolVersions = versions }
 }
 
 // WithLogger enables logging of server activity to the given logger.
 // Diagnostics belong off the protocol channel (stderr for stdio, not
 // stdout), which is exactly what a caller-supplied *slog.Logger is for.
 func WithLogger(logger *slog.Logger) Option {
-	return func(o *mcpsdk.ServerOptions) { o.Logger = logger }
+	return func(o *options) { o.sdk.Logger = logger }
 }
 
 // NewServer creates a Server advertising the given name and version. Options
-// populate the underlying official-SDK ServerOptions; see Option.
+// populate the underlying official-SDK ServerOptions and the kit's own
+// configuration; see Option. Nothing is installed by default: sanitization in
+// particular is opt-in (WithSanitize).
 func NewServer(name, version string, opts ...Option) *Server {
-	var so mcpsdk.ServerOptions
+	o := options{sanitize: sanitizeDefault}
 	for _, opt := range opts {
-		opt(&so)
+		opt(&o)
+	}
+	sdk := mcpsdk.NewServer(&mcpsdk.Implementation{Name: name, Version: version}, &o.sdk)
+	// One AddReceivingMiddleware call, because separate calls nest the later
+	// one outside the earlier. Sanitize goes first (outermost) so it runs
+	// before every caller-supplied middleware and tool guard.
+	var recv []mcpsdk.Middleware
+	if o.sanitize {
+		logger := o.sanitizeLogger
+		if logger == nil {
+			logger = o.sdk.Logger
+		}
+		if logger == nil {
+			logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+		}
+		recv = append(recv, sanitize.Middleware(logger))
+	}
+	recv = append(recv, o.receiving...)
+	if len(recv) > 0 {
+		sdk.AddReceivingMiddleware(recv...)
 	}
 	return &Server{
-		sdk:      mcpsdk.NewServer(&mcpsdk.Implementation{Name: name, Version: version}, &so),
+		sdk:      sdk,
 		name:     name,
 		version:  version,
+		cfg:      o,
 		defs:     make(map[string]ToolDefinition),
 		handlers: make(map[string]ToolHandler),
 	}
@@ -229,18 +251,27 @@ func (s *Server) SDKServer() *mcpsdk.Server {
 	return s.sdk
 }
 
-// RegisterTool registers a tool, or replaces a previous registration with
-// the same name.
+// RegisterTool registers a tool. A previous registration with the same name
+// is replaced unless WithDuplicateTools says otherwise. Tool middleware
+// installed with WithToolMiddleware wraps t.Handler; the wrapped handler is
+// what both the wire path and CallTool run.
+//
+// Under WithBehaviorRequired, RegisterTool panics: use RegisterChecked.
 func (s *Server) RegisterTool(t Tool) {
+	if s.cfg.behaviorRequired {
+		panic(fmt.Sprintf("server: tool %q: WithBehaviorRequired is set; use RegisterChecked", t.Name))
+	}
+	s.registerTool(t)
+}
+
+func (s *Server) registerTool(t Tool) {
 	annotations := ToolAnnotations{
 		ReadOnlyHint:    t.ReadOnlyHint,
 		DestructiveHint: t.DestructiveHint,
 		IdempotentHint:  t.IdempotentHint,
 		OpenWorldHint:   t.OpenWorldHint,
 	}
-
-	s.mu.Lock()
-	s.defs[t.Name] = ToolDefinition{
+	def := ToolDefinition{
 		Name:         t.Name,
 		Title:        t.Title,
 		Description:  t.Description,
@@ -248,7 +279,30 @@ func (s *Server) RegisterTool(t Tool) {
 		OutputSchema: t.OutputSchema,
 		Annotations:  annotations,
 	}
-	s.handlers[t.Name] = t.Handler
+
+	handler := t.Handler
+	if handler != nil {
+		for i := len(s.cfg.toolMW) - 1; i >= 0; i-- {
+			handler = s.cfg.toolMW[i](def, handler)
+		}
+	}
+
+	s.mu.Lock()
+	if _, dup := s.defs[t.Name]; dup {
+		switch s.cfg.dup {
+		case DuplicateReplace:
+			// fall through to overwrite below
+		case DuplicatePanic:
+			s.mu.Unlock()
+			panic(fmt.Sprintf("server: duplicate tool registration %q", t.Name))
+		case DuplicateRecord:
+			s.regErrs = append(s.regErrs, fmt.Errorf("server: duplicate tool registration %q (first registration kept)", t.Name))
+			s.mu.Unlock()
+			return
+		}
+	}
+	s.defs[t.Name] = def
+	s.handlers[t.Name] = handler
 	s.mu.Unlock()
 
 	destructive := t.DestructiveHint
@@ -269,7 +323,15 @@ func (s *Server) RegisterTool(t Tool) {
 			OpenWorldHint:   &openWorld,
 		},
 	}
-	s.sdk.AddTool(sdkTool, adaptHandler(t.Name, t.Handler))
+	s.sdk.AddTool(sdkTool, adaptHandler(t.Name, handler))
+}
+
+// RegistrationErrors returns the errors recorded under DuplicateRecord, in
+// order. It is empty under the other policies.
+func (s *Server) RegistrationErrors() []error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]error(nil), s.regErrs...)
 }
 
 // ToolDefinitions returns all registered tools' public definitions, sorted
@@ -309,7 +371,10 @@ func (s *Server) RemoveTools(names ...string) {
 // use and tests. RPC callers are served through the wrapped SDK server, via
 // Run or an HTTP transport, which additionally attach resultType, cache,
 // annotation metadata, and the StructuredContent/text-content split that
-// this direct path does not.
+// this direct path does not. It does not run receiving middleware
+// (WithSanitize, WithReceivingMiddleware) -- those live on the SDK server --
+// but it does run tool middleware (WithToolMiddleware), since that is part
+// of the registered handler.
 func (s *Server) CallTool(ctx context.Context, name string, args map[string]any) (any, error) {
 	s.mu.RLock()
 	h, ok := s.handlers[name]
