@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -412,6 +413,25 @@ func TestNewServerOptionsInitializedHandlerLegacyHandshakeOnly(t *testing.T) {
 	}
 }
 
+// syncBuffer is a bytes.Buffer safe for the SDK's session goroutines to log
+// into while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
 // TestNewServerOptionsCapabilitiesProtocolVersionsAndLogger covers the
 // second, narrower round of Option additions: Capabilities and
 // SupportedProtocolVersions are exact protocol/capability-negotiation
@@ -419,8 +439,8 @@ func TestNewServerOptionsInitializedHandlerLegacyHandshakeOnly(t *testing.T) {
 // otherwise unreachable once SDKServer() has already built the underlying
 // *mcpsdk.Server.
 func TestNewServerOptionsCapabilitiesProtocolVersionsAndLogger(t *testing.T) {
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	logs := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logs, nil))
 
 	srv := NewServer("cerberus", "test",
 		WithCapabilities(&mcpsdk.ServerCapabilities{}), // overrides the default {"logging":{}}
