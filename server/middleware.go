@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,6 +24,12 @@ type options struct {
 	sanitizeLogger   *slog.Logger
 	dup              DuplicatePolicy
 	behaviorRequired bool
+
+	catalog   bool // install the tools/list catalog middleware
+	ordered   bool // WithToolOrder given
+	pinned    []string
+	pageSize  int
+	profileOf func(context.Context) string
 }
 
 // ToolMiddleware wraps a tool's handler at registration time. def is the
