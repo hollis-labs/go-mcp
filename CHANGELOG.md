@@ -8,6 +8,20 @@ All notable changes to this project will be documented in this file.
 
 - `go` line raised to 1.26.6 (portfolio-wide floor).
 
+### Added (client)
+
+- `CallOption`s on `Pool.CallTool` and `Client.CallTool` (variadic, so
+  existing callers compile unchanged): `WithCallMeta` (protocol `_meta`),
+  `WithCallRetry` with `RetryDefault` / `RetryNever` / `RetryIfUnsent`, and
+  `WithCallTimeout`.
+- `IsProvablyUnsent(err)` — public form of Nanite's classifier for the SDK's
+  pre-write "client is closing" rejection.
+- Pool options `WithCallRetryPolicy`, `WithDefaultCallTimeouts`,
+  `WithClientOptions` (the SDK's `ClientOptions` were always passed as nil)
+  and `WithToolListChangedHandler`.
+- Note: `*Pool` / `*Client` no longer satisfy a hand-written interface that
+  declares the old `CallTool` signature.
+
 ### Fixed (compat)
 
 - `NewSSEClientTransport`: the sanitizing reader now hands out at most one

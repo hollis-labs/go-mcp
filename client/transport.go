@@ -76,7 +76,12 @@ func dialSDK(ctx context.Context, name string, cfg ServerConfig, maxResponseByte
 		return nil, "", fmt.Errorf("go-mcp/client: server %q: %w", name, err)
 	}
 
-	sdkClient := mcpsdk.NewClient(&mcpsdk.Implementation{Name: opts.identityName, Version: opts.identityVersion}, nil)
+	var clientOpts *mcpsdk.ClientOptions
+	if opts.clientOpts != nil {
+		clientOpts = &mcpsdk.ClientOptions{}
+		opts.clientOpts(name, clientOpts)
+	}
+	sdkClient := mcpsdk.NewClient(&mcpsdk.Implementation{Name: opts.identityName, Version: opts.identityVersion}, clientOpts)
 
 	switch kind {
 	case TransportStdio:

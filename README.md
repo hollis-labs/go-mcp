@@ -248,6 +248,19 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   `WithMaxResponseBytes`, not applied automatically.
 - `IsRecoverableError(err) bool` — the classifier deciding whether a
   connection error is worth invalidating and re-dialing.
+- `IsProvablyUnsent(err) bool` — true only for the SDK's "client is
+  closing" rejection, which happens before the request is written, so a
+  retry cannot double-execute a tool. Recoverable is not the same as unsent.
+- Per-call options on `Pool.CallTool` / `Client.CallTool`: `WithCallMeta(map)`
+  (protocol `_meta`; copied, later wins per key), `WithCallRetry(RetryPolicy)`
+  (`RetryDefault` = today's behavior, `RetryNever`, `RetryIfUnsent`), and
+  `WithCallTimeout(d)` (per attempt, layered on the caller's ctx; never
+  extends a caller deadline). Pool-level: `WithCallRetryPolicy(p)` (default
+  for `CallTool` only), `WithDefaultCallTimeouts(map[transport]d)` (only when
+  the caller's ctx has no deadline), `WithClientOptions(func(server, *mcp.ClientOptions))`
+  (called at every dial; capabilities, elicitation/sampling handlers) and
+  `WithToolListChangedHandler(func(ctx, server))`. A caller that passes none
+  sees no change.
 - Reconnect and health-probe both leave a connection alone when the
   failure was only the caller's own context ending — an abandoned
   request looks identical to a broken connection from here, and closing
@@ -314,6 +327,31 @@ it.
   window with every configured `Secrets` value redacted, including a secret
   split across the window's edge by a mid-stream read. `Redact(original,
   secrets)` is the underlying pure string-redaction function.
+
+A per-call `_meta` and retry policy, e.g. an idempotency key that makes a
+retry safe:
+
+```go
+pool := client.NewPool(client.WithIdentity("myapp", "1.0.0"))
+_ = pool.Register("files", client.ServerConfig{Transport: client.TransportStdio, Command: "files-mcp"})
+
+res, meta, err := pool.CallTool(ctx, "files", "write", args,
+	client.WithCallMeta(map[string]any{"myapp/idempotencyKey": key}),
+	client.WithCallRetry(client.RetryIfUnsent),
+	client.WithCallTimeout(30*time.Second),
+)
+```
+
+`client` compatibility: the added variadic parameter compiles for every
+existing caller, but a hand-written interface with the old
+`CallTool(ctx, server, tool, args)` method set is no longer satisfied by
+`*Pool` / `*Client`. Pre-1.0: minor releases may change exported API.
+
+`client` is out of scope for: supervised stdio (proactive reconnect, status,
+`OnReconnect`), gateway policy (budgets, visibility, virtual servers), and
+OpenTelemetry. The trace-context carrier is the caller's choice via
+`WithCallMeta`. Note that a `Client` holds its lock for a whole call, so a
+`Pool` serializes calls per server.
 
 ## Notes
 

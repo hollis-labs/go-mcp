@@ -2,9 +2,12 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +21,15 @@ import (
 // own cmd_test.go uses, which avoids needing a separate compiled fixture
 // binary or testdata directory.
 const runAsServerEnv = "_GOMCP_CLIENT_TEST_RUN_AS_SERVER"
+
+// runAsServerPIDLogEnv names a file the fixture appends its pid to at
+// startup; runAsServerExitAfterCallEnv makes it exit shortly after its
+// first tools/call.
+const (
+	runAsServerExtraToolsEnv    = "_GOMCP_CLIENT_TEST_EXTRA_TOOLS"
+	runAsServerPIDLogEnv        = "_GOMCP_CLIENT_TEST_PID_LOG"
+	runAsServerExitAfterCallEnv = "_GOMCP_CLIENT_TEST_EXIT_AFTER_CALL"
+)
 
 func TestMain(m *testing.M) {
 	if os.Getenv(runAsServerEnv) != "" {
@@ -58,8 +70,68 @@ func runFixtureServer() {
 		},
 		ReadOnlyHint: true,
 	})
+	if os.Getenv(runAsServerExtraToolsEnv) != "" {
+		registerExtraTools(srv)
+	}
+	registerLifecycle(srv)
 	if err := srv.Run(context.Background()); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// registerExtraTools adds the tools the call-options tests need, off by
+// default so the original fixture's tool count stays 2.
+func registerExtraTools(srv *gmcpserver.Server) {
+	srv.RegisterTool(gmcpserver.Tool{
+		Name:         "meta",
+		Description:  "returns the request's _meta as JSON",
+		InputSchema:  gmcpserver.EmptyObjectSchema(),
+		ReadOnlyHint: true,
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			b, err := json.Marshal(gmcpserver.MetaFromContext(ctx))
+			return string(b), err
+		},
+	})
+	srv.RegisterTool(gmcpserver.Tool{
+		Name:        "add_tool",
+		Description: "registers a new tool, which announces tools/list_changed",
+		InputSchema: gmcpserver.EmptyObjectSchema(),
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			srv.RegisterTool(gmcpserver.Tool{
+				Name:         "late",
+				Description:  "registered after the first call",
+				InputSchema:  gmcpserver.EmptyObjectSchema(),
+				ReadOnlyHint: true,
+				Handler:      func(context.Context, map[string]any) (any, error) { return "late", nil },
+			})
+			return "ok", nil
+		},
+	})
+}
+
+// registerLifecycle wires the pid-log and exit-after-call behaviors.
+func registerLifecycle(srv *gmcpserver.Server) {
+	// Exit-after-call fixture: log this process's pid at startup, then die
+	// shortly after answering a first tool call, so the NEXT call on the
+	// cached connection hits a dead subprocess.
+	if pidLog := os.Getenv(runAsServerPIDLogEnv); pidLog != "" {
+		f, err := os.OpenFile(pidLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // test-owned temp path
+		if err == nil {
+			fmt.Fprintln(f, os.Getpid())
+			_ = f.Close()
+		}
+	}
+	if os.Getenv(runAsServerExitAfterCallEnv) != "" {
+		var once sync.Once
+		srv.SDKServer().AddReceivingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+			return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
+				res, err := next(ctx, method, req)
+				if method == "tools/call" {
+					once.Do(func() { time.AfterFunc(150*time.Millisecond, func() { os.Exit(0) }) })
+				}
+				return res, err
+			}
+		})
 	}
 }
 
