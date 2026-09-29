@@ -13,7 +13,8 @@ is the pieces that were being rewritten in every server.
 
 - `README.md` lists what each package currently exposes.
 - `budget/envelope.go` and `budget/budget.go` own the list envelope and
-  truncation; `budget/tokens.go` owns the token estimate; `budget/errors.go`
+  truncation; `budget/tokens.go` owns the token estimate; `budget/{cursor,fit,page}.go` own
+  cursors, byte/token fitting and `ApplyPage`/`Seal`; `budget/errors.go`
   owns the app-owned protocol error-code taxonomy.
 - `server/server.go` owns tool registration, dispatch and cancellation as a
   thin wrapper over the SDK's `*mcp.Server`; `server/schema.go` owns strict
@@ -84,4 +85,11 @@ that changes.
 
 Budget truncation clamps a caller-supplied limit to the configured maximum
 rather than honoring it (`TestApply_LimitClampedToMax`), so a large `limit`
-cannot blow a context window.
+cannot blow a context window (`Config.MaxLimit` moves that ceiling when a
+caller opts in).
+
+`Config.MaxBytes`/`MaxTokens` are enforced only when the caller sets them
+(zero = no cap); never apply `DefaultMaxBytes`/`DefaultMaxTokens`
+implicitly, that would silently shrink every existing caller's pages. `Apply`
+without a cap must stay byte-identical (no `hasMore`/`truncatedBy`).
+Paging must always keep at least one item, or a cursor loops forever.
