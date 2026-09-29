@@ -48,8 +48,9 @@ go vet ./...
 go test -race -count=1 ./...
 ```
 
-There is no CI workflow and no Makefile in this repo, so these are the only
-gate.
+CI (`.github/workflows/check.yml`, config in `.golangci.yml`) runs these plus
+`golangci-lint`, `go mod verify` and `govulncheck`; there is no Makefile, so these are the only
+local gate.
 
 ## Boundaries
 

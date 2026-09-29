@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Added CI (`.github/workflows/check.yml`), in-repo `.golangci.yml`, and `doc.go` for `staleness`, `transport/http` and `examples/list`.
+
 ## v0.8.0 — 2026-09-29
 
 ### Changed
