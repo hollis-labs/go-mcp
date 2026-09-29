@@ -1,9 +1,3 @@
-// Package main demonstrates wrapping a list-style MCP tool response with
-// the budget package: extracting pagination from untyped params, applying
-// truncation with a progressive-disclosure hint, and rendering the
-// resulting JSON tool response.
-//
-// Run with: go run ./examples/list
 package main
 
 import (
