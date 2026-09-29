@@ -16,9 +16,16 @@ type fakeSession struct {
 	callToolErrs []error // consumed one per call; last repeats
 	pingErrs     []error
 	closed       bool
+	params       []*mcpsdk.CallToolParams // every CallTool's params, in order
+	ctxDeadlines []bool                   // whether each CallTool ctx had a deadline
+	callDeadline []time.Time
 }
 
 func (f *fakeSession) CallTool(ctx context.Context, params *mcpsdk.CallToolParams) (*mcpsdk.CallToolResult, error) {
+	f.params = append(f.params, params)
+	dl, ok := ctx.Deadline()
+	f.ctxDeadlines = append(f.ctxDeadlines, ok)
+	f.callDeadline = append(f.callDeadline, dl)
 	if err := popErr(&f.callToolErrs); err != nil {
 		return nil, err
 	}

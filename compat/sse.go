@@ -110,7 +110,15 @@ type sanitizingReader struct {
 	// to repair an endpoint event that names a different one.
 	authority *url.URL
 
-	pending bytes.Buffer // complete, already-sanitized bytes waiting to be read
+	// ready holds complete, already-sanitized event blocks not yet handed
+	// out; cur is the unread remainder of the block being handed out. Read
+	// returns at most one block per call: the SDK reads the "endpoint"
+	// event through a throwaway bufio.Reader and then starts a second
+	// reader on the same body, so any bytes past the endpoint block that
+	// the first reader buffered are lost. Never returning two blocks in one
+	// Read keeps the endpoint event alone in that first buffer.
+	ready   [][]byte
+	cur     []byte
 	partial bytes.Buffer // an event block not yet terminated by a blank line
 	err     error
 }
@@ -120,7 +128,7 @@ func newSanitizingReader(inner io.ReadCloser, streamURL *url.URL) *sanitizingRea
 }
 
 func (r *sanitizingReader) Read(p []byte) (int, error) {
-	for r.pending.Len() == 0 {
+	for len(r.cur) == 0 && len(r.ready) == 0 {
 		if r.err != nil {
 			return 0, r.err
 		}
@@ -138,18 +146,20 @@ func (r *sanitizingReader) Read(p []byte) (int, error) {
 			r.err = err
 			// Flush whatever is left so a final unterminated block is not lost.
 			if r.partial.Len() > 0 {
-				r.pending.Write(r.partial.Bytes())
+				r.ready = append(r.ready, bytes.Clone(r.partial.Bytes()))
 				r.partial.Reset()
-			}
-			if r.pending.Len() == 0 {
-				return 0, err
 			}
 		}
 	}
-	return r.pending.Read(p)
+	if len(r.cur) == 0 {
+		r.cur, r.ready = r.ready[0], r.ready[1:]
+	}
+	n := copy(p, r.cur)
+	r.cur = r.cur[n:]
+	return n, nil
 }
 
-// drainBlocks moves every complete event block from partial to pending,
+// drainBlocks moves every complete event block from partial to ready,
 // dropping or rewriting as needed. An SSE block ends at a blank line.
 func (r *sanitizingReader) drainBlocks() {
 	for {
@@ -166,7 +176,7 @@ func (r *sanitizingReader) drainBlocks() {
 		block := string(data[:idx+width])
 		r.partial.Next(idx + width)
 		if out, keep := r.sanitizeBlock(block); keep {
-			r.pending.WriteString(out)
+			r.ready = append(r.ready, []byte(out))
 		}
 	}
 }

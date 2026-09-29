@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- `go` line raised to 1.26.6 (portfolio-wide floor).
+
+### Added (client)
+
+- `CallOption`s on `Pool.CallTool` and `Client.CallTool` (variadic, so
+  existing callers compile unchanged): `WithCallMeta` (protocol `_meta`),
+  `WithCallRetry` with `RetryDefault` / `RetryNever` / `RetryIfUnsent`, and
+  `WithCallTimeout`.
+- `IsProvablyUnsent(err)` — public form of Nanite's classifier for the SDK's
+  pre-write "client is closing" rejection.
+- Pool options `WithCallRetryPolicy`, `WithDefaultCallTimeouts`,
+  `WithClientOptions` (the SDK's `ClientOptions` were always passed as nil)
+  and `WithToolListChangedHandler`.
+- Note: `*Pool` / `*Client` no longer satisfy a hand-written interface that
+  declares the old `CallTool` signature.
+
+### Fixed (compat)
+
+- `NewSSEClientTransport`: the sanitizing reader now hands out at most one
+  event block per `Read`. The SDK reads the `endpoint` event through a
+  throwaway `bufio.Reader` and then starts a second reader on the same body,
+  discarding whatever the first buffered; when the `endpoint` and the first
+  `message` arrived together, `Read` blocked until the caller's deadline
+  (`TestNewSSEClientTransport_EndToEnd` failed ~60% of runs).
+
+## v0.7.1 — 2026-09-18
+
+### Fixed (client)
+
+- A stdio subprocess's lifetime is no longer tied to the per-call context
+  (`exec.CommandContext`), so a call ending no longer kills the shared server.
+
 ## v0.7.0 — 2026-09-18
 
 ### Added

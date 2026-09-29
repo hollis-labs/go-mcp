@@ -1,11 +1,14 @@
 package client
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
 	"sort"
 	"time"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // DefaultMaxResponseBytes is a suggested cap, matching Nanite's own prior
@@ -38,6 +41,10 @@ type config struct {
 	buildHTTPClient func(headers map[string]string, timeoutSeconds int) *http.Client
 
 	logger *slog.Logger
+
+	callRetry    RetryPolicy
+	callTimeouts map[string]time.Duration
+	clientOpts   func(server string, o *mcpsdk.ClientOptions)
 }
 
 func defaultConfig() config {
@@ -147,6 +154,61 @@ func WithLogger(l *slog.Logger) Option {
 	return func(c *config) {
 		if l != nil {
 			c.logger = l
+		}
+	}
+}
+
+// WithCallRetryPolicy sets the default retry policy for CallTool on every
+// Client this Pool creates; WithCallRetry overrides it per call. ListTools
+// and Ping are read-only and always use RetryDefault.
+func WithCallRetryPolicy(p RetryPolicy) Option {
+	return func(c *config) { c.callRetry = p }
+}
+
+// WithDefaultCallTimeouts sets a per-attempt CallTool timeout by transport
+// (keys TransportStdio, TransportHTTP, TransportSSE). A default applies only
+// when the caller's context has no deadline of its own, and
+// WithCallTimeout overrides it. Missing or non-positive entries mean no
+// timeout for that transport. The map is copied.
+func WithDefaultCallTimeouts(byTransport map[string]time.Duration) Option {
+	return func(c *config) {
+		c.callTimeouts = make(map[string]time.Duration, len(byTransport))
+		for k, d := range byTransport {
+			if d > 0 {
+				c.callTimeouts[k] = d
+			}
+		}
+	}
+}
+
+// WithClientOptions registers fn to adjust the official SDK's ClientOptions
+// at every dial (including re-dials), receiving the server's registered
+// name. It is the escape hatch for what this package does not wrap:
+// Capabilities, elicitation and sampling handlers, list-changed handlers.
+// Handlers run on SDK goroutines while a call may hold the Client's lock;
+// they must not call back into the same Client.
+func WithClientOptions(fn func(server string, o *mcpsdk.ClientOptions)) Option {
+	return func(c *config) { c.clientOpts = fn }
+}
+
+// WithToolListChangedHandler is WithClientOptions for the common case:
+// fn runs when a server announces its tool list changed. Only transports
+// that carry server-initiated notifications deliver it (stdio, sse); the
+// stateless streamable-HTTP transport does not. It composes with an earlier
+// WithClientOptions rather than replacing it.
+func WithToolListChangedHandler(fn func(ctx context.Context, server string)) Option {
+	return func(c *config) {
+		if fn == nil {
+			return
+		}
+		prev := c.clientOpts
+		c.clientOpts = func(server string, o *mcpsdk.ClientOptions) {
+			if prev != nil {
+				prev(server, o)
+			}
+			o.ToolListChangedHandler = func(ctx context.Context, _ *mcpsdk.ToolListChangedRequest) {
+				fn(ctx, server)
+			}
 		}
 	}
 }

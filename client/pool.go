@@ -72,13 +72,14 @@ func (p *Pool) Get(name string) (*Client, error) {
 	return c, nil
 }
 
-// CallTool calls a tool on the named server.
-func (p *Pool) CallTool(ctx context.Context, name, tool string, args map[string]any) (*mcpsdk.CallToolResult, CallMetadata, error) {
+// CallTool calls a tool on the named server. See CallOption for per-call
+// _meta, retry policy and timeout.
+func (p *Pool) CallTool(ctx context.Context, name, tool string, args map[string]any, opts ...CallOption) (*mcpsdk.CallToolResult, CallMetadata, error) {
 	c, err := p.Get(name)
 	if err != nil {
 		return nil, CallMetadata{}, err
 	}
-	return c.CallTool(ctx, tool, args)
+	return c.CallTool(ctx, tool, args, opts...)
 }
 
 // ListTools lists the named server's tools.

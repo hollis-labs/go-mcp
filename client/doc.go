@@ -14,6 +14,14 @@
 // uniformly across all three transports and Tether's does not (it has no
 // automatic reconnection at all for SSE/HTTP, by its own design).
 //
+// Per-call behavior is tuned with CallOptions (WithCallMeta, WithCallRetry,
+// WithCallTimeout) and Pool-level defaults (WithCallRetryPolicy,
+// WithDefaultCallTimeouts). Retrying a tool call is only safe when the
+// request provably never reached the server: IsRecoverableError says a
+// connection is worth re-dialing, IsProvablyUnsent says a retry cannot
+// repeat a side effect. WithClientOptions and WithToolListChangedHandler
+// reach the official SDK's ClientOptions, which were previously always nil.
+//
 // Response-size capping and leak-prevention-on-error are first-class
 // behaviors here (see WithMaxResponseBytes and the stdio handling in
 // stdio.go) rather than left to each app to reimplement -- both are real,

@@ -41,3 +41,21 @@ func IsRecoverableError(err error) bool {
 	}
 	return false
 }
+
+// IsProvablyUnsent reports whether err is a tools/call failure where the
+// request provably never reached the server, so retrying cannot repeat a
+// side effect. It is nil-safe.
+//
+// The official SDK's jsonrpc2 connection rejects a call with "client is
+// closing" in exactly three cases -- Close already in progress, a prior
+// write failure, or the read side already failed (a stdio server's
+// subprocess died between calls) -- and all three checks run before the
+// request is written. Every other failure, including the errors
+// IsRecoverableError accepts, is ambiguous about delivery.
+//
+// The match is on message text, not a code: -32003 is also
+// budget.ErrCodeForbidden, so a code alone would misclassify a forbidden
+// response as unsent.
+func IsProvablyUnsent(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "client is closing")
+}

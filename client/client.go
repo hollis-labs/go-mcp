@@ -87,16 +87,9 @@ func (c *Client) SetMaxResponseBytes(n int) {
 	c.mu.Unlock()
 }
 
-// CallTool calls a tool on the server, connecting first if needed.
-func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (*mcpsdk.CallToolResult, CallMetadata, error) {
-	return withSession(ctx, c, "call tool "+name, func(sess sdkSession) (*mcpsdk.CallToolResult, error) {
-		return sess.CallTool(ctx, &mcpsdk.CallToolParams{Name: name, Arguments: args})
-	})
-}
-
 // ListTools lists the server's tools, connecting first if needed.
 func (c *Client) ListTools(ctx context.Context) (*mcpsdk.ListToolsResult, error) {
-	res, _, err := withSession(ctx, c, "list tools", func(sess sdkSession) (*mcpsdk.ListToolsResult, error) {
+	res, _, err := withSession(ctx, c, "list tools", RetryDefault, func(sess sdkSession) (*mcpsdk.ListToolsResult, error) {
 		return sess.ListTools(ctx, &mcpsdk.ListToolsParams{})
 	})
 	return res, err
@@ -107,7 +100,7 @@ func (c *Client) ListTools(ctx context.Context) (*mcpsdk.ListToolsResult, error)
 // lazy health probe internally -- it's exposed for a caller that wants to
 // force a liveness check on its own schedule.
 func (c *Client) Ping(ctx context.Context) error {
-	_, _, err := withSession(ctx, c, "ping", func(sess sdkSession) (struct{}, error) {
+	_, _, err := withSession(ctx, c, "ping", RetryDefault, func(sess sdkSession) (struct{}, error) {
 		return struct{}{}, sess.Ping(ctx, &mcpsdk.PingParams{})
 	})
 	return err
@@ -216,7 +209,7 @@ func (c *Client) logf(format string, args ...any) {
 // the NEXT caller a reconnect too. This matches a real prior behavior
 // (Nanite's SSE transport's retireUnlessCallerGaveUp) that a broader
 // close-on-any-error rule would otherwise have silently regressed.
-func withSession[T any](ctx context.Context, c *Client, op string, fn func(sdkSession) (T, error)) (T, CallMetadata, error) {
+func withSession[T any](ctx context.Context, c *Client, op string, policy RetryPolicy, fn func(sdkSession) (T, error)) (T, CallMetadata, error) {
 	var zero T
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -251,7 +244,7 @@ func withSession[T any](ctx context.Context, c *Client, op string, fn func(sdkSe
 			_ = c.closeLocked()
 		}
 
-		if attempt < c.opts.retries && IsRecoverableError(err) && ctx.Err() == nil {
+		if attempt < maxRetries(policy, c.opts.retries) && shouldRetry(policy, err) && ctx.Err() == nil {
 			meta.RetryCount++
 			meta.Reconnected = true
 			if dialErr := c.connectLocked(ctx); dialErr != nil {
@@ -261,5 +254,32 @@ func withSession[T any](ctx context.Context, c *Client, op string, fn func(sdkSe
 			continue
 		}
 		return zero, meta, fmt.Errorf("go-mcp/client: %s %q: %w", op, c.name, err)
+	}
+}
+
+// shouldRetry applies policy's error gate. It never looks at the retry
+// budget; see maxRetries.
+func shouldRetry(policy RetryPolicy, err error) bool {
+	switch policy {
+	case RetryNever:
+		return false
+	case RetryIfUnsent:
+		return IsProvablyUnsent(err)
+	default:
+		return IsRecoverableError(err)
+	}
+}
+
+// maxRetries is the retry budget for policy given the Pool's WithRetries
+// value. RetryIfUnsent is safe by construction, so it gets at least one
+// retry even when WithRetries(0) disabled the default policy.
+func maxRetries(policy RetryPolicy, configured int) int {
+	switch policy {
+	case RetryNever:
+		return 0
+	case RetryIfUnsent:
+		return max(configured, 1)
+	default:
+		return configured
 	}
 }
