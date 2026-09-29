@@ -1,6 +1,6 @@
 module github.com/hollis-labs/go-mcp
 
-go 1.26.1
+go 1.26.6
 
 require github.com/modelcontextprotocol/go-sdk v1.8.0
 
