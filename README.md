@@ -42,6 +42,7 @@ for release notes.
 ```bash
 go get github.com/hollis-labs/go-mcp/budget
 go get github.com/hollis-labs/go-mcp/server
+go get github.com/hollis-labs/go-mcp/args
 go get github.com/hollis-labs/go-mcp/client
 go get github.com/hollis-labs/go-mcp/transport/http
 go get github.com/hollis-labs/go-mcp/auth
@@ -425,6 +426,88 @@ existing caller, but a hand-written interface with the old
 OpenTelemetry. The trace-context carrier is the caller's choice via
 `WithCallMeta`. Note that a `Client` holds its lock for a whole call, so a
 `Pool` serializes calls per server.
+
+## Server kit and `args`
+
+`server` composes tool behavior at registration time and `args` reads
+arguments with named coercions. Nothing here is on by default.
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+
+	"github.com/hollis-labs/go-mcp/server"
+)
+
+func main() {
+	srv := server.NewServer("notes", "0.1.0",
+		server.WithSanitize(nil),                          // opt-in; logs to stderr, never stdout
+		server.WithToolMiddleware(server.StrictArgs()),    // refuse unknown / missing arguments
+	)
+	srv.RegisterChecked(server.Tool{
+		Name:        "note_get",
+		Description: "Fetch a note by id.",
+		InputSchema: server.InputSchema(
+			server.StringProp("id", "note id", true),
+			server.IntegerProp("limit", "max lines", false),
+		),
+		Handler: func(ctx context.Context, args map[string]any) (any, error) {
+			return map[string]any{"id": args["id"]}, nil
+		},
+	}, server.Reads("looks up one note by id; no side effects"))
+
+	if err := srv.Run(context.Background()); err != nil {
+		log.New(os.Stderr, "", 0).Fatal(err)
+	}
+}
+```
+
+With that server, `note_get {"idd": "1"}` returns an error result (`IsError`)
+whose `ToolError` says `idd` is not an argument and suggests `id`, instead of
+a successful call that silently dropped the value.
+
+- `server.WithToolMiddleware` / `ToolMiddleware` — per-tool handler wrappers;
+  first registered is outermost; they also run on `Server.CallTool`.
+  `WithReceivingMiddleware` installs SDK middleware; `WithSanitize` (explicit
+  opt-in, runs first) installs the `sanitize` middleware.
+- `server.RegisterChecked(tool, Reads(why) | Writes() | Destroys(why))` with
+  `.OpenWorld()` / `.Idempotent()`; `WithBehaviorRequired`; `AnnotationTable`
+  with `UnknownPanic` / `UnknownCautious` / `UnknownError`;
+  `CautiousAnnotations`; `ValidateAnnotations`.
+- `server.WithDuplicateTools(DuplicateReplace | DuplicatePanic |
+  DuplicateRecord)` and `Server.RegistrationErrors`.
+- `server.StrictArgs(opts...)` (names and required only; options
+  `WithTransportKeys`, `WithTransportPrefix`, `WithStripTransportKeys`,
+  `WithRetiredArgs`, `WithErrorCode`, `WithViolationHandler`) and
+  `server.ValidateSchema()` (full jsonschema-go validation, rejects `"50"` for
+  an integer; use only where clients send exact types).
+- `args` — `String`, `Trimmed`, `NonBlank`, `Bool`, `Float`, `Int`,
+  `IntClamped`, `PositiveInt`, `Whole`, `Strings`, `NonBlankStrings`,
+  `LenientInt` / `LenientFloat` / `LenientBool`, `Require`. Each coercion is
+  its own function; see the package doc. It depends only on the standard
+  library and `budget`.
+
+Compatibility: this is additive. `server.Tool`, `RegisterTool`,
+`NewServer(name, version, ...Option)` and every existing `With*` keep their
+signatures. `server.Option` is now `func(*options)` over an unexported
+struct (it was `func(*mcpsdk.ServerOptions)`), so code that wrote its own
+`Option` literal against the SDK type no longer compiles; none in this
+portfolio does. `google/jsonschema-go` becomes a direct dependency (already in
+the build graph through the SDK).
+
+### Out of scope
+
+Not part of these packages: required-scope enforcement, an error-code
+vocabulary (the guard's code is `invalid_argument` and overridable with
+`WithErrorCode`), an `mcptest` conformance harness, OpenTelemetry spans or
+trace-carrier parsing (go-mcp stays OTel-free; `_traceparent` is only
+exempted from the argument check), and gateway concerns such as policy,
+budgets, tool visibility and virtual servers. Sanitization is not default-on,
+and hints are never inferred from tool names.
 
 ## Notes
 

@@ -18,7 +18,10 @@ is the pieces that were being rewritten in every server.
   owns the app-owned protocol error-code taxonomy.
 - `server/server.go` owns tool registration, dispatch and cancellation as a
   thin wrapper over the SDK's `*mcp.Server`; `server/schema.go` owns strict
-  tool schemas.
+  tool schemas; `server/middleware.go` (tool/receiving middleware, opt-in
+  `WithSanitize`, duplicate policy), `server/annotations.go` (`Behavior`,
+  `AnnotationTable`) and `server/guard.go` (`StrictArgs`, `ValidateSchema`)
+  own the kit. `args/` holds the named argument accessors (stdlib + `budget`).
 - `transport/http/handler.go` wraps the SDK's stateless Streamable HTTP
   handler, with an origin allowlist enforced ahead of it.
 - `auth/` — the `Provider` seam (`Verifier`/`Options`) plus `StaticProvider`,
