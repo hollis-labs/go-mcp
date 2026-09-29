@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
 	"sync"
 	"time"
 
@@ -84,6 +83,19 @@ type Tool struct {
 	// set of external entities (e.g. a web search) rather than a closed
 	// domain (e.g. a memory store).
 	OpenWorldHint bool
+
+	// AlwaysLoad marks a tool a caller-facing profile must never filter out.
+	// It is published as the tool's _meta "tether/alwaysLoad": true, and
+	// omitted entirely when false.
+	AlwaysLoad bool
+
+	// TTLMs and CacheScope ("public" or "private") are this tool's own cache
+	// hint. MCP has no per-tool slot for them: a server built with
+	// WithToolOrder or WithToolsListPagination folds the tools of each
+	// tools/list page into the page's single ttlMs/cacheScope (see
+	// WithToolsListPagination). Zero values mean "not cacheable" and "public".
+	TTLMs      int
+	CacheScope string
 }
 
 // ToolAnnotations is the typed MCP tool-annotation set, matching Tool's
@@ -103,6 +115,16 @@ type ToolDefinition struct {
 	InputSchema  any             `json:"inputSchema"`
 	OutputSchema any             `json:"outputSchema,omitempty"`
 	Annotations  ToolAnnotations `json:"annotations"`
+
+	// AlwaysLoad, TTLMs and CacheScope carry the Tool fields of the same name
+	// (see Tool). They are not part of the public JSON shape.
+	AlwaysLoad bool   `json:"-"`
+	TTLMs      int    `json:"-"`
+	CacheScope string `json:"-"`
+	// AnnotationsChecked is true when the definition's hints came from a
+	// Behavior via RegisterChecked, false for a plain RegisterTool. LintCatalog
+	// reads it under WithRequireChecked.
+	AnnotationsChecked bool `json:"-"`
 }
 
 // Server wraps an official-SDK *mcpsdk.Server, adding go-mcp's
@@ -119,6 +141,8 @@ type Server struct {
 	regErrs  []error
 	defs     map[string]ToolDefinition
 	handlers map[string]ToolHandler
+	order    []string // registration order of names in defs; guarded by mu
+	sdkTools map[string]*mcpsdk.Tool
 }
 
 // Option configures the official SDK's mcpsdk.ServerOptions at construction
@@ -137,8 +161,17 @@ type Option func(*options)
 
 // WithInstructions sets the free-text instructions advertised to connecting
 // clients during initialize.
+//
+// The Option panics when applied (that is, inside NewServer) if instructions
+// is longer than MaxInstructionsLen runes; ValidateInstructions is the
+// non-panicking check.
 func WithInstructions(instructions string) Option {
-	return func(o *options) { o.sdk.Instructions = instructions }
+	return func(o *options) {
+		if err := ValidateInstructions(instructions); err != nil {
+			panic(err.Error())
+		}
+		o.sdk.Instructions = instructions
+	}
 }
 
 // WithInitializedHandler installs a callback invoked when a session sends
@@ -227,17 +260,24 @@ func NewServer(name, version string, opts ...Option) *Server {
 		recv = append(recv, sanitize.Middleware(logger))
 	}
 	recv = append(recv, o.receiving...)
-	if len(recv) > 0 {
-		sdk.AddReceivingMiddleware(recv...)
-	}
-	return &Server{
+	srv := &Server{
 		sdk:      sdk,
 		name:     name,
 		version:  version,
 		cfg:      o,
 		defs:     make(map[string]ToolDefinition),
 		handlers: make(map[string]ToolHandler),
+		sdkTools: make(map[string]*mcpsdk.Tool),
 	}
+	// The tools/list catalog middleware is innermost: it replaces the result
+	// the SDK built, after sanitize and every caller middleware have run.
+	if o.catalog {
+		recv = append(recv, srv.toolsListMiddleware())
+	}
+	if len(recv) > 0 {
+		sdk.AddReceivingMiddleware(recv...)
+	}
+	return srv
 }
 
 // Info returns the server's advertised name and version.
@@ -261,10 +301,18 @@ func (s *Server) RegisterTool(t Tool) {
 	if s.cfg.behaviorRequired {
 		panic(fmt.Sprintf("server: tool %q: WithBehaviorRequired is set; use RegisterChecked", t.Name))
 	}
-	s.registerTool(t)
+	s.registerTool(t, false)
 }
 
-func (s *Server) registerTool(t Tool) {
+func (s *Server) registerTool(t Tool, checked bool) {
+	switch t.CacheScope {
+	case "", "public", "private":
+	default:
+		panic(fmt.Sprintf("server: tool %q: CacheScope %q must be \"public\" or \"private\"", t.Name, t.CacheScope))
+	}
+	if t.TTLMs < 0 {
+		panic(fmt.Sprintf("server: tool %q: TTLMs must not be negative", t.Name))
+	}
 	annotations := ToolAnnotations{
 		ReadOnlyHint:    t.ReadOnlyHint,
 		DestructiveHint: t.DestructiveHint,
@@ -278,6 +326,11 @@ func (s *Server) registerTool(t Tool) {
 		InputSchema:  t.InputSchema,
 		OutputSchema: t.OutputSchema,
 		Annotations:  annotations,
+
+		AlwaysLoad:         t.AlwaysLoad,
+		TTLMs:              t.TTLMs,
+		CacheScope:         t.CacheScope,
+		AnnotationsChecked: checked,
 	}
 
 	handler := t.Handler
@@ -301,6 +354,9 @@ func (s *Server) registerTool(t Tool) {
 			return
 		}
 	}
+	if _, seen := s.defs[t.Name]; !seen {
+		s.order = append(s.order, t.Name)
+	}
 	s.defs[t.Name] = def
 	s.handlers[t.Name] = handler
 	s.mu.Unlock()
@@ -323,6 +379,12 @@ func (s *Server) registerTool(t Tool) {
 			OpenWorldHint:   &openWorld,
 		},
 	}
+	if t.AlwaysLoad {
+		sdkTool.Meta = mcpsdk.Meta{AlwaysLoadMetaKey: true}
+	}
+	s.mu.Lock()
+	s.sdkTools[t.Name] = sdkTool
+	s.mu.Unlock()
 	s.sdk.AddTool(sdkTool, adaptHandler(t.Name, handler))
 }
 
@@ -334,18 +396,13 @@ func (s *Server) RegistrationErrors() []error {
 	return append([]error(nil), s.regErrs...)
 }
 
-// ToolDefinitions returns all registered tools' public definitions, sorted
-// deterministically by name.
+// ToolDefinitions returns all registered tools' public definitions in
+// catalog order: sorted by name, or, under WithToolOrder, pinned names first,
+// then registration order, then name.
 func (s *Server) ToolDefinitions() []ToolDefinition {
 	s.mu.RLock()
-	defs := make([]ToolDefinition, 0, len(s.defs))
-	for _, d := range s.defs {
-		defs = append(defs, d)
-	}
-	s.mu.RUnlock()
-
-	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
-	return defs
+	defer s.mu.RUnlock()
+	return s.orderedLocked()
 }
 
 // RemoveTools removes tools with the given names, symmetric with
@@ -359,7 +416,15 @@ func (s *Server) RemoveTools(names ...string) {
 	for _, name := range names {
 		delete(s.defs, name)
 		delete(s.handlers, name)
+		delete(s.sdkTools, name)
 	}
+	kept := s.order[:0]
+	for _, n := range s.order {
+		if _, ok := s.defs[n]; ok {
+			kept = append(kept, n)
+		}
+	}
+	s.order = kept
 	s.mu.Unlock()
 	s.sdk.RemoveTools(names...)
 }

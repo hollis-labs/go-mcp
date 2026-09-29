@@ -75,7 +75,7 @@ func (s *Server) RegisterChecked(t Tool, b Behavior) {
 	a := b.Annotations()
 	t.ReadOnlyHint, t.DestructiveHint = a.ReadOnlyHint, a.DestructiveHint
 	t.IdempotentHint, t.OpenWorldHint = a.IdempotentHint, a.OpenWorldHint
-	s.registerTool(t)
+	s.registerTool(t, true)
 }
 
 // AnnotationTable maps tool names to deliberately chosen annotations.

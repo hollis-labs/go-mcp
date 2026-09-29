@@ -18,6 +18,15 @@
 // WithDuplicateTools chooses what registering an existing name does: replace
 // (the default), panic, or record an error and keep the first.
 //
+// # Catalog
+//
+// WithToolOrder and WithToolsListPagination (catalog.go) replace the SDK's
+// always-complete, alphabetical tools/list with the server's own catalog:
+// pinned, then registration order, then name, in pages bound by fingerprint
+// to the catalog and a profile id. Tool.AlwaysLoad, TTLMs and CacheScope
+// feed the _meta hint and each page's cache fields. LintCatalog (lint.go) is
+// an opt-in check of names, titles, instructions length and annotations.
+//
 // # Middleware
 //
 // There are two layers, and they see different things.

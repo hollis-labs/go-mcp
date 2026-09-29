@@ -499,6 +499,81 @@ struct (it was `func(*mcpsdk.ServerOptions)`), so code that wrote its own
 portfolio does. `google/jsonschema-go` becomes a direct dependency (already in
 the build graph through the SDK).
 
+### Ordered, paginated `tools/list` and catalog lint
+
+The SDK's own `tools/list` is always complete and alphabetical. Two opt-in
+options replace it with the server's own catalog: `WithToolOrder(pinned...)`
+(pinned names first, then registration order, then name) and
+`WithToolsListPagination(pageSize, profileOf)` (pages with an opaque
+`nextCursor` bound to `CatalogFingerprint()` and the profile id, so a cursor
+from another profile or from before a catalog change is refused with JSON-RPC
+invalid params, -32602). Each page's `ttlMs` / `cacheScope` fold the tools'
+`Tool.TTLMs` / `Tool.CacheScope` (smallest ttl, `private` wins), and
+`Tool.AlwaysLoad` publishes `_meta["tether/alwaysLoad"] = true`.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/hollis-labs/go-mcp/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+func main() {
+	srv := server.NewServer("catalog", "0.1.0",
+		server.WithToolOrder("status"),         // pinned first
+		server.WithToolsListPagination(2, nil), // 2 tools per page; nil = one shared profile
+	)
+	for _, name := range []string{"zeta", "alpha", "status"} {
+		srv.RegisterTool(server.Tool{
+			Name: name, Title: name, Description: name,
+			InputSchema: server.EmptyObjectSchema(), ReadOnlyHint: true,
+			AlwaysLoad: name == "status", TTLMs: 60000,
+		})
+	}
+
+	page, next, _ := srv.PaginateCatalog("", "", 2)
+	for _, d := range page {
+		fmt.Println(d.Name) // status, zeta
+	}
+	fmt.Println(next != "") // true
+
+	// The same order is what a real client sees over the wire.
+	ct, st := mcpsdk.NewInMemoryTransports()
+	ctx := context.Background()
+	_, _ = srv.SDKServer().Connect(ctx, st, nil)
+	cs, _ := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "c", Version: "0"}, nil).Connect(ctx, ct, nil)
+	res, _ := cs.ListTools(ctx, nil)
+	fmt.Println(len(res.Tools), res.NextCursor != "")
+
+	// Opt-in lint, never run by NewServer.
+	for _, is := range server.LintCatalog(srv.ToolDefinitions()) {
+		fmt.Println(is.Tool, is.Message)
+	}
+}
+```
+
+`server.LintCatalog(defs, opts...)` checks name charset (`^[a-z0-9_]+$`) and
+length (default 64, `WithMaxNameLength`; `WithNameCharset`), blank titles,
+names that differ only by case, an over-long instructions string
+(`WithLintInstructions`), and appends `ValidateAnnotations`' findings;
+`WithRequireChecked` also flags tools not registered through `RegisterChecked`
+(`ToolDefinition.AnnotationsChecked`). `WithInstructions` now panics past
+`MaxInstructionsLen` (2048 runes); `ValidateInstructions` is the non-panicking
+check. A gateway merging several upstream catalogs should set
+`DuplicatePanic` or `DuplicateRecord`; `LintCatalog` covers only what that
+cannot see (case-only collisions).
+
+Compatibility: additive and opt-in. A server that installs neither
+`WithToolOrder` nor `WithToolsListPagination` behaves exactly as before
+(alphabetical `ToolDefinitions`, the SDK's own `tools/list`). The new `Tool`
+and `ToolDefinition` fields have zero values that reproduce today's behavior.
+Only tools registered through the `Server` are listed by the catalog
+middleware; tools added directly via `SDKServer().AddTool` are not.
+
 ### Out of scope
 
 Not part of these packages: required-scope enforcement, an error-code

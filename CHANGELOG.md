@@ -2,9 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## v0.9.0 — 2026-09-29
+
+### Changed
 
 - Added CI (`.github/workflows/check.yml`), in-repo `.golangci.yml`, and `doc.go` for `staleness`, `transport/http` and `examples/list`.
+
+### Added (server)
+
+- Deterministic `tools/list`: `WithToolOrder(pinned...)` (pinned, then
+  registration order, then name; also applied by `ToolDefinitions`) and
+  `WithToolsListPagination(pageSize, profileOf)` (catalog middleware installed
+  innermost, after sanitize and `WithReceivingMiddleware`), with
+  `Server.PaginateCatalog` and `Server.CatalogFingerprint`. Cursors reuse
+  `budget`'s codec (kind `tools/list`); a stale or cross-profile cursor is
+  JSON-RPC invalid params (-32602).
+- `Tool` / `ToolDefinition` gain `AlwaysLoad` (published as
+  `_meta["tether/alwaysLoad"]`, `AlwaysLoadMetaKey`), `TTLMs` and `CacheScope`
+  (folded into each page's `ttlMs` / `cacheScope`); `ToolDefinition` also
+  gains `AnnotationsChecked`, set by `RegisterChecked`.
+- `LintCatalog` with `WithNameCharset`, `WithMaxNameLength`,
+  `WithLintInstructions`, `WithRequireChecked`; `MaxInstructionsLen`,
+  `ValidateInstructions`, and `WithInstructions` now panics past the limit.
 
 ## v0.8.0 — 2026-09-29
 
