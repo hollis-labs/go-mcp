@@ -39,6 +39,36 @@ All notable changes to this project will be documented in this file.
   neither set, `Apply` output is unchanged; the `Default*` constants are
   suggestions only and are never applied implicitly.
 
+### Added (server)
+
+- Tool middleware: `ToolMiddleware`, `WithToolMiddleware` (first registered is
+  outermost; also runs on `Server.CallTool`) and `WithReceivingMiddleware`.
+- `WithSanitize(logger)`: explicit opt-in install of `sanitize.Middleware`.
+  `NewServer` installs nothing by default; the default lives in one unexported
+  constant. A nil logger uses the `WithLogger` logger, else stderr.
+- `WithDuplicateTools` (`DuplicateReplace` default, `DuplicatePanic`,
+  `DuplicateRecord`) and `Server.RegistrationErrors`.
+- Annotation policy: `Behavior` (`Reads`, `Writes`, `Destroys`, `OpenWorld`,
+  `Idempotent`), `Server.RegisterChecked`, `WithBehaviorRequired`,
+  `AnnotationTable` with `UnknownPolicy`, `CautiousAnnotations`,
+  `ValidateAnnotations`.
+- `StrictArgs` (unknown and missing argument guard with nearest-name
+  suggestions, returning a `*budget.ToolError`) and opt-in `ValidateSchema`
+  (jsonschema-go). Options: `WithTransportKeys`, `WithTransportPrefix`,
+  `WithStripTransportKeys`, `WithRetiredArgs`, `WithErrorCode`,
+  `WithViolationHandler`.
+- `doc.go` for the package.
+- Note: `Option` is now `func(*options)`; a hand-written
+  `func(*mcpsdk.ServerOptions)` no longer converts to it. `google/jsonschema-go`
+  moves from indirect to direct in `go.mod`.
+
+### Added (args)
+
+- New package `args`: named argument accessors (`String`, `Trimmed`,
+  `NonBlank`, `Bool`, `Float`, `Int`, `IntClamped`, `PositiveInt`, `Whole`,
+  `Strings`, `NonBlankStrings`, `LenientInt`, `LenientFloat`, `LenientBool`)
+  and `Require`. Standard library and `budget` only.
+
 ### Fixed (compat)
 
 - `NewSSEClientTransport`: the sanitizing reader now hands out at most one
