@@ -22,6 +22,23 @@ All notable changes to this project will be documented in this file.
 - Note: `*Pool` / `*Client` no longer satisfy a hand-written interface that
   declares the old `CallTool` signature.
 
+### Added (budget)
+
+- Opaque, versioned, fingerprint-bound cursors: `EncodeCursor` /
+  `DecodeCursor`, `Fingerprint`, `EncodeOffset` / `DecodeOffset`,
+  `EncodeKeyset` / `DecodeKeyset` and `Keyset`; errors `ErrInvalidCursor`
+  and `ErrCursorMismatch` (wraps `ErrInvalidCursor`).
+- `FitPrefix`, `ArrayBytes` and `BytesCap`: exact byte-accounted prefix
+  fitting in O(log n), always keeping at least one item so paging terminates.
+- `ApplyPage` (in-memory slice with `Page`) and `Seal` (store-windowed page),
+  and `Envelope.HasMore` / `NextCursor` / `TruncatedBy` (`limit`, `maxBytes`,
+  `maxTokens`; omitted when unset).
+- `Config.MaxLimit` overrides the package `MaxLimit` clamp (0 keeps 25).
+- `Config.MaxBytes` / `Config.MaxTokens` are now enforced when the caller sets
+  a positive value (resolves the open "enforce or remove" follow-up). With
+  neither set, `Apply` output is unchanged; the `Default*` constants are
+  suggestions only and are never applied implicitly.
+
 ### Fixed (compat)
 
 - `NewSSEClientTransport`: the sanitizing reader now hands out at most one

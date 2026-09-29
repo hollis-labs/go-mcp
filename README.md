@@ -111,9 +111,15 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
 `github.com/hollis-labs/go-mcp/budget`
 
 - `Envelope` — response wrapper with `Items`, `Count`, `Total`, `Truncated`,
-  and `Hint` fields (`budget/envelope.go`).
-- `Config` — caller-supplied limits: `Limit`, `MaxBytes`, `MaxTokens`
-  (`budget/budget.go`).
+  and `Hint` fields, plus opt-in `HasMore`, `NextCursor` and `TruncatedBy`
+  (`budget/envelope.go`).
+- `ApplyPage`, `Seal`, `Page`, `Fingerprint`, the cursor codec (`EncodeCursor`,
+  `DecodeCursor`, `EncodeOffset`, `DecodeOffset`, `EncodeKeyset`,
+  `DecodeKeyset`, `Keyset`, `ErrInvalidCursor`, `ErrCursorMismatch`) and
+  `FitPrefix` / `ArrayBytes` / `BytesCap` — see "Paging, cursors and enforced
+  caps" below (`budget/page.go`, `cursor.go`, `fit.go`).
+- `Config` — caller-supplied limits: `Limit`, `MaxLimit`, `MaxBytes`,
+  `MaxTokens` (`budget/budget.go`). Byte and token caps bind only when set.
 - `Apply[T any](items []T, cfg Config, hintTemplate string) Envelope` —
   generic helper that truncates a slice to the budget and builds an
   `Envelope` with a progressive-disclosure hint (`budget/budget.go`).
@@ -157,6 +163,73 @@ A runnable end-to-end demo lives in [`examples/list/`](./examples/list).
   structured, protocol-level MCP error for signaling a request-level
   failure (as opposed to a tool-execution error reported in successful
   result content) (`budget/errors.go`).
+
+#### Paging, cursors and enforced caps
+
+`ApplyPage` pages an in-memory slice; `Seal` finishes a page a store has
+already windowed. Both enforce the `Config.MaxBytes` / `Config.MaxTokens` the
+caller sets (measured on one marshaled `Envelope`, hint and cursor included),
+always keep at least one item so paging terminates, and mint the next cursor
+*after* the trim, so it reflects what shipped. `Envelope` gains `hasMore`,
+`nextCursor` and `truncatedBy` (`"limit"`, `"maxBytes"` or `"maxTokens"`), all
+omitted when unset.
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/hollis-labs/go-mcp/budget"
+)
+
+func main() {
+	items := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+	fp := budget.Fingerprint("list", "all") // filters + sort, not page size
+
+	cursor := ""
+	for {
+		env, err := budget.ApplyPage(items,
+			budget.Page{Cursor: cursor, Fingerprint: fp, IssueCursors: true},
+			budget.Config{Limit: 2, MaxBytes: 4000},
+			"%d items available.")
+		if err != nil { // errors.Is(err, budget.ErrInvalidCursor) => bad argument
+			panic(err)
+		}
+		fmt.Println(env.Items, env.HasMore, env.TruncatedBy)
+		if env.NextCursor == "" {
+			break
+		}
+		cursor = env.NextCursor
+	}
+}
+```
+
+- Cursors are opaque, versioned, base64url tokens bound to a `Fingerprint` of
+  the query. A cursor replayed against a different query fails with
+  `ErrCursorMismatch` (which is also `ErrInvalidCursor`). `EncodeOffset` /
+  `DecodeOffset` and `EncodeKeyset` / `DecodeKeyset` cover offset and keyset
+  paging; `EncodeCursor` / `DecodeCursor` carry any JSON state.
+- `Seal(items, hasMore, cfg, next, hint)` is for stores that page in SQL: the
+  `next(lastKept)` callback builds the cursor from the last row that shipped.
+  It must be pure, because it can be called for candidate sizes while fitting.
+- `FitPrefix`, `ArrayBytes` and `BytesCap` are the fit primitives for callers
+  that keep their own envelope and only want exact byte accounting.
+- `Config.MaxLimit` raises (or lowers) the ceiling `Limit` is clamped to;
+  zero keeps the package `MaxLimit` of 25.
+- The `server` package sends a returned struct twice (StructuredContent and a
+  mirrored text block), so `MaxBytes` bounds one copy; halve it if wire size
+  matters.
+
+**Compatibility.** Everything is additive. `Apply` with no `MaxBytes` /
+`MaxTokens` set returns exactly the output it always did (no new fields).
+`DefaultMaxBytes` / `DefaultMaxTokens` remain as suggested values but are
+never applied implicitly. Callers that set a cap now get it enforced.
+
+**Out of scope.** Previews, JSON-pointer and string truncation, and result
+caching (the sibling `go-toolresult` library); a portfolio-wide list envelope
+(surfaces keep their own wire shape); sort allow-lists and SQL typing of
+keyset values; token counting beyond the 4-bytes-per-token estimate.
 
 `github.com/hollis-labs/go-mcp/server`
 
@@ -355,10 +428,11 @@ OpenTelemetry. The trace-context carrier is the caller's choice via
 
 ## Notes
 
-- `Config.MaxBytes` and `Config.MaxTokens` are accepted by `Apply` but are
-  **not** currently enforced — only `Limit` drives truncation. Either
-  tightening enforcement or removing the fields will be a deliberate choice
-  in a future minor release; see `CHANGELOG.md` for the open follow-up.
+- `Config.MaxBytes` and `Config.MaxTokens` are enforced, but only when the
+  caller sets them to a positive value; zero means no cap and the `Default*`
+  constants are never applied implicitly. `Apply`, `ApplyPage` and `Seal`
+  trim to the largest prefix whose marshaled `Envelope` fits (at least one
+  item), and `truncatedBy` names the knob that bound.
 
 ## Dependencies
 
