@@ -86,3 +86,35 @@ func TestNewSSEClientTransport_EndToEnd(t *testing.T) {
 		t.Fatal("timed out waiting for the POST to reach /message — endpoint authority was not repaired")
 	}
 }
+
+// TestNewSSEClientTransport_EndpointAndMessageInOneFlush pins the SDK
+// read-ahead bug: the endpoint event and the first message arrive in a
+// single write. The SDK's first reader buffers past the endpoint block and
+// then discards the rest, so without one-block-per-Read the message is lost
+// and Read blocks until the caller's deadline.
+func TestNewSSEClientTransport_EndpointAndMessageInOneFlush(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "event: endpoint\ndata: /message\n\n"+
+			"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	conn, err := NewSSEClientTransport(srv.URL+"/sse", nil).Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Read(ctx); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+}

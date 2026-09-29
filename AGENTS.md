@@ -5,7 +5,8 @@ the official `github.com/modelcontextprotocol/go-sdk`, targeting the
 2026-07-28 spec (`adr_go-mcp-official-sdk-consolidation`): response budgeting
 and truncation, a server core with strict typed tool contracts, an HTTP
 transport, a pluggable auth seam, argument sanitization, and backward-compat
-adapters. It is not an MCP client and not a full protocol implementation — it
+adapters, plus a `client` package (a supervised-lite connection pool, since
+v0.5.0). It is not a full protocol implementation — it
 is the pieces that were being rewritten in every server.
 
 ## Start Here
