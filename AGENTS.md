@@ -48,6 +48,9 @@ is the pieces that were being rewritten in every server.
   layered discovery) implement `Source` in the app rather than growing this
   package. `server.LintCatalog`'s `WithExpectedNames` is the golden-tool-list
   check that goes with it.
+- `mcptest/` — test helper: `Connect` runs the in-memory handshake against a
+  `server.Server` and asserts nothing else (no tool or annotation checks; that
+  is `server.LintCatalog`'s job). Imports `server` and the SDK only.
 - `docs/http-transport-followups.md` records known gaps in that transport.
 
 ## Commands

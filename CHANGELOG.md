@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added (mcptest)
+
+- New package `mcptest`: `Connect(t, srv, opts...)` wires a `*server.Server`
+  to an in-process client over the SDK's in-memory transports, completes the
+  handshake and returns the client session plus a cleanup func; any failure
+  calls `t.Fatalf` and returns nil values. Options `WithClientIdentity`,
+  `WithClientOptions`, `WithContext`, `WithHandshakeTimeout`; `TestingT` is
+  `Helper` plus `Fatalf`. It asserts connect and handshake only, nothing about
+  tools or annotations. Provenance: `mcp.minimum_profile.q14a` ("mcptest.Connect
+  only"); replaces the same in-memory connect boilerplate hand-rolled in
+  tangent, torque, cerberus, sigil, hadron, nanite, tesseract and mcp-host
+  tests. Additive; no existing API changes.
+
 ## v0.12.0 — 2026-09-30
 
 ### Added (skills)

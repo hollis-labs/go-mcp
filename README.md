@@ -613,7 +613,7 @@ way to a client that advertises it.
 
 Not part of these packages: required-scope enforcement, an error-code
 vocabulary (the guard's code is `invalid_argument` and overridable with
-`WithErrorCode`), an `mcptest` conformance harness, OpenTelemetry spans or
+`WithErrorCode`), a conformance suite beyond `mcptest.Connect` (see below), OpenTelemetry spans or
 trace-carrier parsing (go-mcp stays OTel-free; `_traceparent` is only
 exempted from the argument check), and gateway concerns such as policy,
 budgets, tool visibility and virtual servers. Sanitization is not default-on,
@@ -749,3 +749,37 @@ Tests live alongside the source under `budget/`:
 ## License
 
 MIT License — see [`LICENSE`](./LICENSE). © Hollis Labs.
+
+## Test helper (`mcptest`)
+
+`github.com/hollis-labs/go-mcp/mcptest` is the portfolio's minimum-profile
+check for a server built on `server`: `Connect` wires it to an in-process
+client over the SDK's in-memory transport and completes the MCP handshake. A
+server for which it succeeds meets the minimum profile (ruling Q14a,
+"`mcptest.Connect` only"); there is no broader profile. It replaces the
+connect/defer-close boilerplate that tests otherwise hand-roll.
+
+```go
+func TestServerConnects(t *testing.T) {
+	srv := server.NewServer("demo", "1.0.0")
+	cs, cleanup := mcptest.Connect(t, srv) // fails the test on any handshake error
+	defer cleanup()
+	_ = cs // a *mcpsdk.ClientSession; use it for your own tool-call assertions
+}
+```
+
+Options: `WithClientIdentity(name, version)` (default `mcptest`/`0.0.0`),
+`WithClientOptions(*mcpsdk.ClientOptions)` for elicitation or sampling
+handlers, `WithContext(ctx)` and `WithHandshakeTimeout(d)` (default 10s) to
+bound the handshake. `TestingT` is just `Helper()` and `Fatalf`, so
+`*testing.T` fits without being required.
+
+Out of scope: `Connect` deliberately asserts nothing about tools,
+annotations, schemas or behavior; use `LintCatalog` for catalog checks and
+your own assertions on the returned session for behavior. It uses the primary
+in-memory transport, not `compat`, stdio or HTTP, and is unrelated to
+`mark3labs/mcp-go`'s package of the same name.
+
+Compatibility: additive, new in the next release; it imports `server` and the
+official SDK's `mcp` package and adds no dependency. Any change to what
+counts as a passing handshake is a breaking change to the floor it defines.
