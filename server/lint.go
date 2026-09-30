@@ -34,6 +34,7 @@ type lintConfig struct {
 	maxName      int
 	instructions *string
 	requireCheck bool
+	expected     map[string]bool // nil: not checking; non-nil (possibly empty): the exact set of tool names
 }
 
 // LintOption configures LintCatalog.
@@ -63,13 +64,32 @@ func WithRequireChecked() LintOption {
 	return func(c *lintConfig) { c.requireCheck = true }
 }
 
+// WithExpectedNames pins the exact set of tool names the catalog exposes, the
+// golden-list contract test many servers write by hand: a tool registered but
+// not in names is reported as "unexpected tool", and a name in names that is
+// not registered as "missing tool". Both are ordinary Issues, in name order,
+// so a drift in either direction fails a test that asserts LintCatalog is
+// empty and says which side moved. It replaces any earlier WithExpectedNames.
+// With no names it expects an empty catalog. Off by default, since a catalog is
+// often supposed to grow.
+func WithExpectedNames(names ...string) LintOption {
+	return func(c *lintConfig) {
+		c.expected = make(map[string]bool, len(names))
+		for _, n := range names {
+			c.expected[n] = true
+		}
+	}
+}
+
 // LintCatalog checks a catalog and returns its findings, empty when clean:
 // name charset and length; a blank title; names that differ only by case
-// (which registration cannot see, because it keys on the exact name); an
-// over-long instructions string (WithLintInstructions); and every finding of
+// (which registration cannot see, because it keys on the exact name); tools
+// that differ from an expected set (WithExpectedNames); an over-long
+// instructions string (WithLintInstructions); and every finding of
 // ValidateAnnotations, appended verbatim. It is opt-in and never called by
 // NewServer or RegisterTool. Findings come in a fixed order: per tool in name
-// order, then collisions, instructions, and annotation contradictions.
+// order, then collisions, unexpected then missing tools, instructions, and
+// annotation contradictions.
 func LintCatalog(defs []ToolDefinition, opts ...LintOption) []Issue {
 	cfg := lintConfig{charset: defaultNameCharset, maxName: DefaultMaxNameLength}
 	for _, o := range opts {
@@ -109,6 +129,26 @@ func LintCatalog(defs []ToolDefinition, opts ...LintOption) []Issue {
 	for _, k := range keys {
 		g := groups[k]
 		out = append(out, Issue{g[0], fmt.Sprintf("names differ only by case: %s", strings.Join(g, ", "))})
+	}
+
+	if cfg.expected != nil {
+		registered := make(map[string]bool, len(sorted))
+		for _, d := range sorted {
+			registered[d.Name] = true
+			if !cfg.expected[d.Name] {
+				out = append(out, Issue{d.Name, "unexpected tool: registered but not in the expected names"})
+			}
+		}
+		missing := make([]string, 0, len(cfg.expected))
+		for n := range cfg.expected {
+			if !registered[n] {
+				missing = append(missing, n)
+			}
+		}
+		sort.Strings(missing)
+		for _, n := range missing {
+			out = append(out, Issue{n, "missing tool: in the expected names but not registered"})
+		}
 	}
 
 	if cfg.instructions != nil {

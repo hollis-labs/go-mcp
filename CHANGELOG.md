@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.12.0 — 2026-09-30
+
+### Added (skills)
+
+- New package `skills`: `Register` adds one progressive-discovery tool to a
+  `server.Server` (no argument: a `{"items", "meta"}` catalog; with a name: that
+  skill's body; unknown name: a `skill_not_found` `*budget.ToolError` that lists
+  the available names and names the tool as its `HelpTool`). `Source` is the
+  extension point; `MapSource` (ordered index plus bodies in memory) and
+  `FSSource` (the top-level `*.md` files of an `fs.FS`, `start-here` first, no
+  frontmatter) are the two stock ones; `WithArgName` and `WithTitle` adjust the
+  tool. The tool is registered read-only and idempotent through
+  `RegisterChecked`, and `Register` verifies the source once and refuses an
+  already-registered name.
+- Provenance, as for `Prop` in v0.7.0: the pattern already existed four times
+  with no shared package (Hadron `hadron_skills`, Tesseract `tesseract_skills`,
+  Station `atlas_guide`, Tether `mux_skill_list`/`_broker`/`_get`). This is a
+  synthesis of the shape the first three share, not a port. Tether's ranked
+  broker and layered project/user discovery are not part of it.
+
+### Added (server)
+
+- `server.WithExpectedNames(names...)`, a `LintOption` for `LintCatalog`: a
+  registered tool not in `names` is an "unexpected tool" issue and a name not
+  registered is a "missing tool" issue, so a catalog that drifts in either
+  direction fails a test that asserts the lint is empty. It generalizes the
+  hand-written golden tool-name test Tangent keeps for its 31 tools, and gives
+  `CatalogFingerprint` (v0.9.0), which has no adopters, a checked-in
+  counterpart that says what changed rather than only that something did. Off
+  by default; no change to any existing behavior.
+
 ## v0.11.0 — 2026-09-29
 
 ### Added (clientguard)

@@ -29,6 +29,9 @@ module currently exposes:
   redacted stderr tail
 - `clientguard` — per-key circuit breaking and client-side call-rate
   limiting around a caller's own upstream call, such as `client.Pool.CallTool`
+- `skills` — one progressive-discovery "skills" tool for a server: a catalog
+  with no argument, one skill's body by name, and a `skill_not_found` tool
+  error that points back at the tool (`Register`, `MapSource`, `FSSource`)
 
 ## Status
 
@@ -569,6 +572,14 @@ check. A gateway merging several upstream catalogs should set
 `DuplicatePanic` or `DuplicateRecord`; `LintCatalog` covers only what that
 cannot see (case-only collisions).
 
+`WithExpectedNames(names...)` pins the exact set of tool names a catalog may
+expose, the golden-list contract test servers otherwise write by hand: a tool
+registered but not listed is an `unexpected tool` issue and a listed name that
+is not registered is a `missing tool` issue, so a test asserting
+`LintCatalog(srv.ToolDefinitions(), server.WithExpectedNames(...))` is empty
+fails in both directions and says which side moved. It is off by default,
+because a catalog is often meant to grow.
+
 Compatibility: additive and opt-in. A server that installs neither
 `WithToolOrder` nor `WithToolsListPagination` behaves exactly as before
 (alphabetical `ToolDefinitions`, the SDK's own `tools/list`). The new `Tool`
@@ -607,6 +618,41 @@ trace-carrier parsing (go-mcp stays OTel-free; `_traceparent` is only
 exempted from the argument check), and gateway concerns such as policy,
 budgets, tool visibility and virtual servers. Sanitization is not default-on,
 and hints are never inferred from tool names.
+
+## Skills tool (`skills`)
+
+`github.com/hollis-labs/go-mcp/skills` registers one tool that lets an agent
+read a server's orientation docs progressively: called with no argument it
+returns the catalog (`{"items": [{"name", "description"}...], "meta":
+{"count", "progressive_discovery": true, "next": <tool>}}`), called with a name
+it returns that skill's text, and an unknown name is a `*budget.ToolError`
+(`skill_not_found`) whose message lists the available names and whose help tool
+is the skills tool itself.
+
+```go
+//go:embed skills/*.md
+var skillFiles embed.FS
+
+skillsFS, _ := fs.Sub(skillFiles, "skills")
+src, err := skills.FSSource(skillsFS) // one skill per *.md; "start-here" listed first
+if err != nil {
+	return err
+}
+err = skills.Register(srv, "myapp_skills",
+	"MyApp orientation. Call with no arguments for the catalog; pass `name` to read one skill.", src)
+```
+
+`MapSource(index, bodies)` serves the same from memory, `WithArgName("topic")`
+renames the argument, and `WithTitle` sets the display title. A server needing
+more than a name, a description and a body implements `skills.Source` itself.
+`FSSource` does not read frontmatter, and `Register` verifies the source once
+(every listed name non-empty, unique and gettable). The tool is read-only and
+idempotent, and refuses a name that is already registered.
+
+Provenance: the shape is a synthesis of four independent implementations
+(Hadron's `hadron_skills`, Tesseract's `tesseract_skills`, Station's
+`atlas_guide`, Tether's `mux_skill_*`), not a port of any of them; Tether's
+ranked broker and layered discovery are deliberately not part of this package.
 
 ## Client call guard (`clientguard`)
 

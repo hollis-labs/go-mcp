@@ -42,6 +42,12 @@ is the pieces that were being rewritten in every server.
   limiter (`Guard`, `Do[T]`) wrapped around a caller's own upstream call, e.g.
   `client.Pool.CallTool`; imports nothing from this module. Its `Guard` is the
   call-admission guard, not `server/guard.go`.
+- `skills/` — the progressive-discovery skills tool (`Register`, `Source`,
+  `MapSource`, `FSSource`), built on `server` and `budget`. A synthesis of four
+  apps' independent implementations; richer sources (frontmatter, ranking,
+  layered discovery) implement `Source` in the app rather than growing this
+  package. `server.LintCatalog`'s `WithExpectedNames` is the golden-tool-list
+  check that goes with it.
 - `docs/http-transport-followups.md` records known gaps in that transport.
 
 ## Commands
