@@ -27,6 +27,8 @@ module currently exposes:
 - `supervise` — pure primitives for a product's own child-process
   supervision loop: a bounded backoff schedule, an exit classifier, and a
   redacted stderr tail
+- `clientguard` — per-key circuit breaking and client-side call-rate
+  limiting around a caller's own upstream call, such as `client.Pool.CallTool`
 
 ## Status
 
@@ -605,6 +607,73 @@ trace-carrier parsing (go-mcp stays OTel-free; `_traceparent` is only
 exempted from the argument check), and gateway concerns such as policy,
 budgets, tool visibility and virtual servers. Sanitization is not default-on,
 and hints are never inferred from tool names.
+
+## Client call guard (`clientguard`)
+
+`github.com/hollis-labs/go-mcp/clientguard` decides whether a call to an
+external upstream is attempted at all: per-key circuit breaking and client-side
+call-rate limiting, meant to wrap `client.Pool.CallTool`. Like `budget`,
+`staleness` and `supervise` it is stdlib-only and owns no lifecycle: it does
+not import `client` (or the SDK, or any go-mcp package). The caller wraps its
+own call and supplies a key, conventionally the server name passed to
+`Pool.Register`. This is the call-admission guard; it is unrelated to
+`server/guard.go` (`StrictArgs`, `ValidateSchema`).
+
+- `Guard` / `New(opts...)` — one `CircuitBreaker` and one `RateLimiter` per
+  key, created lazily. With no options it is a passthrough.
+  `Guard.Do(ctx, key, fn)` and the generic `Do[T](ctx, g, key, fn)` run `fn`
+  in this order: breaker (`ErrCircuitOpen`), then limiter (`ErrRateLimited`,
+  or a wait), then `fn`, then record the outcome. `fn` runs with no lock held.
+  `State(key)` and `Available(key)` are read-only introspection;
+  `Reset(key)` drops a key's state (pair it with `Pool.Deregister`).
+- Options, all opt-in: `WithCircuitBreaker(threshold, cooldown)`,
+  `WithRateLimit(limit, period, mode)` with `RateLimitReject` (default, fail
+  fast) or `RateLimitBlock` (wait, honoring `ctx`), and
+  `WithFailureClassifier(func(error) bool)`.
+- `CircuitBreaker` — closed, open, half-open. After `cooldown` it admits
+  **exactly one** probe; concurrent callers get `ErrCircuitOpen` until the
+  probe reports. A probe that never reaches a verdict (limiter refusal,
+  cancelled `ctx`, a panic in `fn`) hands its slot back, so the breaker cannot
+  stay half-open forever. `Release()` is the primitive for a caller using
+  `Allow` directly. Defaults: `DefaultThreshold` (5), `DefaultCooldown` (30s),
+  starting points, not measured against any real MCP upstream.
+- `RateLimiter` — a sliding-window call count (`Allow`, `Wait`, `WaitTime`,
+  `Available`). A rejected `Allow` consumes no budget.
+- `Guard.Do` never counts a caller's own `context.Canceled` as an upstream
+  failure. An expired `ctx` deadline does count, since a slow upstream is a
+  failing one. The default classifier counts every other non-nil error. For
+  `Pool.CallTool` that is nearly right: tool-level failures arrive as a
+  `CallToolResult` with `IsError` and a nil error, so Go errors are
+  connection failures, timeouts, dial errors and JSON-RPC protocol errors
+  (and `Pool`'s "is not registered" error). Use `WithFailureClassifier` to
+  exempt the ones that say nothing about the upstream.
+
+```go
+pool := client.NewPool(client.WithIdentity("myapp", "1.0.0"))
+_ = pool.Register("flaky", client.ServerConfig{Transport: client.TransportStdio, Command: "flaky-mcp"})
+
+g := clientguard.New(
+	clientguard.WithCircuitBreaker(5, 30*time.Second),
+	clientguard.WithRateLimit(60, time.Minute, clientguard.RateLimitReject),
+)
+
+res, err := clientguard.Do(ctx, g, "flaky", func(ctx context.Context) (*mcpsdk.CallToolResult, error) {
+	result, _, err := pool.CallTool(ctx, "flaky", "search", args, client.WithCallTimeout(10*time.Second))
+	return result, err
+})
+if errors.Is(err, clientguard.ErrCircuitOpen) {
+	// the upstream is being given a break; fail fast rather than dial again
+}
+```
+
+`clientguard` compatibility: a new package; nothing existing changes, and it
+adds no `go.mod` dependency. Pre-1.0: minor releases may change exported API.
+
+`clientguard` is out of scope for: per-call timeouts and connection retry
+(`client`'s `WithCallTimeout` and `RetryPolicy`), a backoff delay between
+retries (`client` reconnects immediately; that is a gap in `client`, not
+something a wrapper can add), profile, policy or visibility (a gateway's job),
+and a `Pool` facade (the two-line wrap above is the API).
 
 ## Notes
 

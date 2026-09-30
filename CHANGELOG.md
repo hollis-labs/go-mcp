@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added (clientguard)
+
+- New package `clientguard`: per-key circuit breaking and client-side
+  call-rate limiting, wrapped around a caller's own call, such as
+  `client.Pool.CallTool`. Stdlib-only, imports nothing from this module, and
+  changes no existing package. This is the call-admission guard, not
+  `server/guard.go`.
+- `Guard` (`New`, `Do`, `State`, `Available`, `Reset`), the generic
+  `Do[T]`, `CircuitBreaker`, `RateLimiter`, `ErrCircuitOpen`,
+  `ErrRateLimited`, and the options `WithCircuitBreaker`, `WithRateLimit`
+  (`RateLimitReject` / `RateLimitBlock`) and `WithFailureClassifier`. All
+  options are opt-in; a bare `New()` is a passthrough.
+- The breaker's algorithm is ported from go-llm-contracts (not imported) with
+  one difference: half-open admits exactly one in-flight probe. The source
+  lets every caller through once it is half-open. A probe that never reaches
+  a verdict (limiter refusal, cancelled `ctx`, a panic in `fn`) releases its
+  slot, and results from calls admitted before a state change are ignored.
+- `RateLimiter` is a sliding-window call count; a rejected `Allow` consumes no
+  budget, unlike the source's unconditional `Record`.
+- `Guard.Do` never counts a caller's own `context.Canceled` as an upstream
+  failure.
+
 ## v0.10.0 — 2026-09-29
 
 ### Added (server)

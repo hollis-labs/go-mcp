@@ -38,6 +38,10 @@ is the pieces that were being rewritten in every server.
   `ClassifyExit`, `Tail` redacted stderr buffer) for a product's own
   child-process supervision loop; owns no lifecycle, same boundary as
   `staleness/`.
+- `clientguard/` — dependency-free per-key circuit breaker and call-rate
+  limiter (`Guard`, `Do[T]`) wrapped around a caller's own upstream call, e.g.
+  `client.Pool.CallTool`; imports nothing from this module. Its `Guard` is the
+  call-admission guard, not `server/guard.go`.
 - `docs/http-transport-followups.md` records known gaps in that transport.
 
 ## Commands
