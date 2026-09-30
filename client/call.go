@@ -45,6 +45,10 @@ type CallOption func(*callConfig)
 // idempotency key or a trace carrier picks its own key names:
 //
 //	client.WithCallMeta(map[string]any{"myapp/idempotencyKey": key})
+//
+// Choose key names per the "_meta conventions (portfolio-wide)" section of
+// this module's AGENTS.md: bare _traceparent/_tracestate for shared-library
+// trace context, <app>/<camelCase> for app-specific keys, and never identity.
 func WithCallMeta(meta map[string]any) CallOption {
 	return func(c *callConfig) {
 		if len(meta) == 0 {
