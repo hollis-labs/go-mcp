@@ -101,8 +101,8 @@ handler has no equivalent surface, and full CORS preflight was judged out of
 scope (see `CHANGELOG.md`, `Unreleased`). A browser-based caller doing a
 cross-origin, non-simple request (any real MCP call — `Content-Type:
 application/json` is never CORS-simple) will fail preflight before
-`AllowedOrigins` is ever reached. Confirmed 2026-09-18: nothing in this
-portfolio calls an MCP HTTP transport from a browser today — every consumer is
+`AllowedOrigins` is ever reached. Confirmed 2026-09-18: nothing in the
+Hollis Labs applications calls an MCP HTTP transport from a browser today — every consumer is
 a backend or CLI client — so this was accepted rather than fixed. Revisit if
 that changes.
 
@@ -128,11 +128,11 @@ of uptime, never on a successful handshake (`TestFlappingProcessStillExhausts`,
 (`TestInFlightCallIsNeverReplayed`). `go-mcp/client`'s reactive stdio transport is
 deliberate and is not to be changed to behave like this package.
 
-## `_meta` conventions (portfolio-wide)
+## `_meta` conventions (Hollis Labs-wide)
 
 Status: ratified convention, not enforced by code. Nothing in this module
 checks, lints or rewrites any of it, and existing apps are not required to
-comply today. Ratified 2026-09-30 (brief `mcp-meta-conventions`).
+comply today.
 
 1. **`_meta`, never `arguments`, for anything that isn't a tool's own input.**
    Trace context, idempotency keys, provenance/session stamping and any future
@@ -145,7 +145,7 @@ comply today. Ratified 2026-09-30 (brief `mcp-meta-conventions`).
    - Tier 1, shared-library concerns: bare, underscore-prefixed keys, spelled
      `_traceparent` and `_tracestate` (W3C trace context, owned by go-otel).
      Reserved for a cross-cutting concern owned by a library shared across the
-     whole portfolio. W3C `baggage` has no `_meta` key: go-otel does not carry
+     every Hollis Labs application. W3C `baggage` has no `_meta` key: go-otel does not carry
      it over MCP today, and this convention does not define one.
    - Tier 2, app-specific concerns: `<app>/<camelCase>`, e.g.
      `hadron/idempotencyKey`. Metadata one app's tools define for their own
@@ -175,10 +175,10 @@ comply today. Ratified 2026-09-30 (brief `mcp-meta-conventions`).
    gateway, not duplicated into `_meta`. `_meta` is MCP call metadata; identity
    is a transport-layer, gateway-stamped concern with a different trust model.
 
-### Current state in the portfolio
+### Current state in Hollis Labs applications
 
-Read from code on 2026-09-30, paths relative to the repos under
-`~/dev/hollis-labs/`; not exhaustive (only Tether, Hadron, Torque, go-otel and
+Read from code on 2026-09-30, paths relative to the sibling repositories under the
+`hollis-labs` GitHub organization; not exhaustive (only Tether, Hadron, Torque, go-otel and
 go-mcp were checked).
 
 | Where | Key / behavior | Source |
@@ -193,14 +193,13 @@ go-mcp were checked).
 
 Net: three key styles (`_x`, `app.x`, `app/x`) and three trace placements
 (`_meta`, outbound `arguments`, inbound `arguments`). Not verified: Nanite and
-Tangent (the brief reports Nanite does neither), and any app outside those
+Tangent, and any app outside those
 checked.
 
 ### Out of scope
 
 No code, lint rule, typed accessor or API is added by this convention. Trace
-injection into `_meta` is a separate piece of work (brief
-`go-otel-mcp-tool-trace`). Identity header design is settled elsewhere.
+injection into `_meta` is a separate piece of work. Identity header design is out of scope here.
 
 ### Compatibility and migration
 
