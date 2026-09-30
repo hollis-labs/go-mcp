@@ -61,9 +61,9 @@ local gate.
 **No longer stdlib-only overall** — `server`, `transport/http`, `auth`,
 `sanitize` and `compat` depend on `github.com/modelcontextprotocol/go-sdk`
 (the whole point of the SDK-consolidation rewrite). Only `budget`,
-`staleness`, and `supervise` remain dependency-free; don't add an SDK import
-to any of the three without a real reason, since that's the one boundary
-this rewrite deliberately kept.
+`staleness`, `supervise`, and `clientguard` remain dependency-free; don't add an
+SDK import to any of the four without a real reason, since that's the one
+boundary this rewrite deliberately kept.
 
 `tools/list` output is sorted by name and must stay deterministic —
 `TestToolsListIsSortedByName` and `TestToolsListSorted`. Clients cache and diff

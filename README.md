@@ -34,8 +34,8 @@ module currently exposes:
 
 Pre-1.0. The `budget`, `server`, `client`, `transport/http`, `auth`,
 `compat`, and `supervise` packages are tested and usable, but the module is
-still being shaped around real app adoption. Only `budget`, `staleness`, and
-`supervise` are stdlib-only; every other package depends on
+still being shaped around real app adoption. Only `budget`, `staleness`,
+`supervise`, and `clientguard` are stdlib-only; every other package depends on
 `github.com/modelcontextprotocol/go-sdk`. See [`CHANGELOG.md`](./CHANGELOG.md)
 for release notes.
 
@@ -685,7 +685,7 @@ and a `Pool` facade (the two-line wrap above is the API).
 
 ## Dependencies
 
-`budget`, `staleness`, and `supervise` use only the Go standard library.
+`budget`, `staleness`, `supervise`, and `clientguard` use only the Go standard library.
 `server`, `client`, `transport/http`, `auth`, and `compat` depend on
 [`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)
 (and its transitive dependencies), which they wrap.
