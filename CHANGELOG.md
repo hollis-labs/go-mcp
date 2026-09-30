@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Documentation
+
+- `AGENTS.md`: new `_meta` conventions (portfolio-wide) section ratifying `_meta`
+  over `arguments`, two key-naming tiers, the gateway-relay `io.modelcontextprotocol/*`
+  stripping rule and header-only identity. Convention only, no code change.
+
 ## v0.13.0 — 2026-09-30
 
 ### Added (mcptest)

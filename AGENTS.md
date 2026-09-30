@@ -110,3 +110,86 @@ caller opts in).
 implicitly, that would silently shrink every existing caller's pages. `Apply`
 without a cap must stay byte-identical (no `hasMore`/`truncatedBy`).
 Paging must always keep at least one item, or a cursor loops forever.
+
+## `_meta` conventions (portfolio-wide)
+
+Status: ratified convention, not enforced by code. Nothing in this module
+checks, lints or rewrites any of it, and existing apps are not required to
+comply today. Ratified 2026-09-30 (brief `mcp-meta-conventions`).
+
+1. **`_meta`, never `arguments`, for anything that isn't a tool's own input.**
+   Trace context, idempotency keys, provenance/session stamping and any future
+   cross-cutting concern belong in the protocol's `_meta` object. A strict tool
+   schema (`additionalProperties: false`) rejects anything smuggled into
+   `arguments`. Handlers read it with `server.MetaFromContext`; callers write
+   it with `client.WithCallMeta` (neither interprets keys).
+
+2. **Two key-naming tiers.**
+   - Tier 1, shared-library concerns: bare, underscore-prefixed keys, spelled
+     `_traceparent` and `_tracestate` (W3C trace context, owned by go-otel).
+     Reserved for a cross-cutting concern owned by a library shared across the
+     whole portfolio. W3C `baggage` has no `_meta` key: go-otel does not carry
+     it over MCP today, and this convention does not define one.
+   - Tier 2, app-specific concerns: `<app>/<camelCase>`, e.g.
+     `hadron/idempotencyKey`. Metadata one app's tools define for their own
+     callers. New app-specific keys use this form.
+   - `tether/alwaysLoad` (`server.AlwaysLoadMetaKey`) has the tier 2 shape and
+     is a reference example. It is per-tool catalog metadata published in
+     `tools/list`, not a per-call `_meta` key, and stays as is. One oddity, not
+     a violation: go-mcp, a shared library, publishes it under an app prefix
+     (`tether/`). Do not rename it; a rename is a wire change for every client.
+   - `tether.provenance` (dot-separated) predates this convention. It should
+     become `tether/provenance` when Tether next touches that key.
+
+3. **SDK-reserved keys are the SDK's; a relaying gateway must not forward them.**
+   The official SDK's `io.modelcontextprotocol/*` keys (e.g. `protocolVersion`,
+   `clientInfo`, `clientCapabilities`) are attached to every outbound
+   `tools/call` by the client session and describe the hop's own client, not
+   the next one. A gateway/proxy relaying a call MUST drop every key with that
+   prefix from the inbound `_meta` before forwarding, and never relay a
+   caller's raw `_meta` verbatim. Its own upstream connection attaches its own.
+   Everything else (trace context, `progressToken`, app keys) passes through.
+   A gateway that stamps a key of its own (Tether does with provenance) SHOULD
+   overwrite or remove any caller-supplied value for that key, so a client
+   cannot forge it.
+
+4. **Identity is never in `_meta`.** Caller user id, email and groups travel as
+   the `X-Forwarded-User-{Id,Email,Groups}` HTTP headers stamped at the
+   gateway, not duplicated into `_meta`. `_meta` is MCP call metadata; identity
+   is a transport-layer, gateway-stamped concern with a different trust model.
+
+### Current state in the portfolio
+
+Read from code on 2026-09-30, paths relative to the repos under
+`~/dev/hollis-labs/`; not exhaustive (only Tether, Hadron, Torque, go-otel and
+go-mcp were checked).
+
+| Where | Key / behavior | Source |
+|---|---|---|
+| go-otel | writes `_traceparent`, `_tracestate` into whatever map it is given | `libs/go-otel/propagation/propagation.go` (`InjectMCP`) |
+| Tether | trace context injected into `params._meta` with go-otel's bare keys, kept bare on purpose; reads `_meta` first with an `arguments` fallback (transition) | `apps/tether/internal/mcpadapter/trace_meta.go` |
+| Tether | `tether.provenance` (dot form) in `_meta`, replaced or removed if a caller supplies it | `apps/tether/internal/mcpadapter/provenance.go` |
+| Tether | `stripSDKMeta` drops keys with prefix `io.modelcontextprotocol/` before forwarding; other keys are kept | `apps/tether/internal/mcpadapter/proxy.go` |
+| Hadron | `hadron/idempotencyKey` in `_meta`; trace context injected into `arguments` (outbound); no inbound extraction found | `apps/hadron/internal/mcpadapter/internal_caller.go` |
+| Torque | reads trace context from `arguments` (inbound), exempted from its unknown-argument guard | `apps/torque/internal/mcpadapter/adapter.go` |
+| go-mcp | `tether/alwaysLoad` tool-catalog key; `StrictArgs` exempts `_traceparent`/`_tracestate` from the argument check by default | `server/catalog.go`, `server/guard.go` |
+
+Net: three key styles (`_x`, `app.x`, `app/x`) and three trace placements
+(`_meta`, outbound `arguments`, inbound `arguments`). Not verified: Nanite and
+Tangent (the brief reports Nanite does neither), and any app outside those
+checked.
+
+### Out of scope
+
+No code, lint rule, typed accessor or API is added by this convention. Trace
+injection into `_meta` is a separate piece of work (brief
+`go-otel-mcp-tool-trace`). Identity header design is settled elsewhere.
+
+### Compatibility and migration
+
+Nothing breaks: existing keys and placements keep working. The convention
+applies to new keys and to the next time an app touches an existing one.
+Moving Hadron's and Torque's `arguments`-based trace propagation to `_meta`,
+and renaming `tether.provenance`, are app-owned adoption work, unscheduled
+here. While a mixed fleet exists, a receiver moving to `_meta` should keep an
+`arguments` fallback (as Tether does) until its callers have moved.

@@ -22,6 +22,9 @@ func WithMeta(ctx context.Context, meta map[string]any) context.Context {
 // call carried no _meta, or for a direct in-process call via
 // Server.CallTool, which bypasses the protocol layer entirely and so has no
 // _meta to carry.
+//
+// Key naming and what belongs in _meta (never identity) are set out in the
+// "_meta conventions (portfolio-wide)" section of this module's AGENTS.md.
 func MetaFromContext(ctx context.Context) map[string]any {
 	meta, _ := ctx.Value(metaKey{}).(map[string]any)
 	return meta

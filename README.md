@@ -728,6 +728,9 @@ and a `Pool` facade (the two-line wrap above is the API).
   constants are never applied implicitly. `Apply`, `ApplyPage` and `Seal`
   trim to the largest prefix whose marshaled `Envelope` fits (at least one
   item), and `truncatedBy` names the knob that bound.
+- `_meta` key naming, placement and gateway-relay rules for the whole portfolio
+  are written down in `AGENTS.md` (`_meta` conventions); they are a convention,
+  not enforced by this module.
 
 ## Dependencies
 
