@@ -112,3 +112,29 @@ func TestNoInputOnAFirstCall(t *testing.T) {
 		t.Fatalf("%v %q %d", err, text(res), len(seen))
 	}
 }
+
+// A handler can see whether the client takes URL elicitation, on the
+// 2026-07-28 protocol and before it.
+func TestClientCapabilitiesReachTheHandler(t *testing.T) {
+	probe := Tool{Name: "caps", Description: "d", InputSchema: EmptyObjectSchema(), ReadOnlyHint: true,
+		Handler: func(ctx context.Context, _ map[string]any) (any, error) {
+			caps := ClientCapabilities(ctx)
+			return fmt.Sprintf("elicitation=%v url=%v", caps != nil && caps.Elicitation != nil, caps != nil && caps.Elicitation != nil && caps.Elicitation.URL != nil), nil
+		}}
+	urlCaps := &mcpsdk.ClientCapabilities{Elicitation: &mcpsdk.ElicitationCapabilities{URL: &mcpsdk.URLElicitationCapabilities{}}}
+	for _, version := range []string{"", "2025-11-25"} {
+		var seen []*mcpsdk.ElicitParams
+		cs := connectMRTR(t, probe, version, urlCaps, &seen)
+		res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "caps"})
+		if err != nil || text(res) != "elicitation=true url=true" {
+			t.Fatalf("protocol %q: %v %q", version, err, text(res))
+		}
+	}
+	var seen []*mcpsdk.ElicitParams
+	cs := connectMRTR(t, probe, "", &mcpsdk.ClientCapabilities{}, &seen)
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "caps"})
+	// An ElicitationHandler alone declares form elicitation, not URL mode.
+	if err != nil || text(res) != "elicitation=true url=false" {
+		t.Fatalf("form only: %v %q", err, text(res))
+	}
+}

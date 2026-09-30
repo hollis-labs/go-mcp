@@ -86,3 +86,23 @@ func orEmpty(m mcpsdk.InputRequestMap) mcpsdk.InputRequestMap {
 	}
 	return m
 }
+
+type capabilitiesKey struct{}
+
+func withClientCapabilities(ctx context.Context, caps *mcpsdk.ClientCapabilities) context.Context {
+	if caps == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, capabilitiesKey{}, caps)
+}
+
+// ClientCapabilities are the calling client's capabilities, from the
+// request's _meta on protocol 2026-07-28 and from the session's initialize
+// before it; nil when the client declared none. A handler reads it to know
+// whether an input request will be understood, for example
+// ClientCapabilities(ctx).Elicitation.URL before asking for a URL
+// elicitation.
+func ClientCapabilities(ctx context.Context) *mcpsdk.ClientCapabilities {
+	caps, _ := ctx.Value(capabilitiesKey{}).(*mcpsdk.ClientCapabilities)
+	return caps
+}

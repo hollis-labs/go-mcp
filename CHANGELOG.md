@@ -14,6 +14,10 @@ All notable changes to this project will be documented in this file.
   passes the retry's responses and state to the handler. The SDK bridges
   sessions on earlier protocols, so one handler serves both. `RequestState`
   travels through the client, so verify it before trusting it.
+- `server.ClientCapabilities(ctx)`: the calling client's capabilities, from
+  the request `_meta` on 2026-07-28 and from the session before it. Check it
+  to see whether the client understands an input request (for example
+  `Elicitation.URL`) before sending one.
 
 ## v0.9.0 — 2026-09-29
 

@@ -482,6 +482,7 @@ func adaptHandler(name string, h ToolHandler) mcpsdk.ToolHandler {
 		handlerCtx := WithNotifier(ctx, sessionNotifier(ctx, req.Session))
 		handlerCtx = WithMeta(handlerCtx, req.Params.Meta)
 		handlerCtx = withInput(handlerCtx, req.Params.InputResponses, req.Params.RequestState)
+		handlerCtx = withClientCapabilities(handlerCtx, req.ClientCapabilities())
 
 		result, err := h(handlerCtx, args)
 		if ctx.Err() != nil {
