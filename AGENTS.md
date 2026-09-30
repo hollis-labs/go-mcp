@@ -34,6 +34,12 @@ is the pieces that were being rewritten in every server.
   SSE client transport and an explicit legacy protocol-version negotiation
   wrapper. Nothing in `server`/`transport/http`/`auth`/`sanitize` depends on
   this package; it exists only for peers that haven't moved to 2026-07-28.
+- `supervisedstdio/` — the proactive supervisor for one stdio MCP child,
+  composing `supervise` (Policy, ClassifyExit, Tail) over the SDK. It imports
+  nothing else from this module: not `client`, `clientguard` or `server`. Its
+  tests re-exec the test binary as a disposable MCP server (`TestFixtureProcess`)
+  and drive the backoff/stable/shutdown clocks through a fake (`fakeClock`), so
+  the schedule is asserted exactly.
 - `supervise/` — dependency-free primitives (`Policy` backoff schedule,
   `ClassifyExit`, `Tail` redacted stderr buffer) for a product's own
   child-process supervision loop; owns no lifecycle, same boundary as
@@ -68,7 +74,7 @@ local gate.
 ## Boundaries
 
 **No longer stdlib-only overall** — `server`, `transport/http`, `auth`,
-`sanitize` and `compat` depend on `github.com/modelcontextprotocol/go-sdk`
+`sanitize`, `compat` and `supervisedstdio` depend on `github.com/modelcontextprotocol/go-sdk`
 (the whole point of the SDK-consolidation rewrite). Only `budget`,
 `staleness`, `supervise`, and `clientguard` remain dependency-free; don't add an
 SDK import to any of the four without a real reason, since that's the one
@@ -110,6 +116,17 @@ caller opts in).
 implicitly, that would silently shrink every existing caller's pages. `Apply`
 without a cap must stay byte-identical (no `hasMore`/`truncatedBy`).
 Paging must always keep at least one item, or a cursor loops forever.
+
+`supervisedstdio` rules, each guarded by a test: a lost transport is not a process
+exit and no replacement starts until `Wait` confirms the old process exited,
+including after a failed handshake (`TestTransportLostWaitsForTheProcessToExit`,
+`TestFailedHandshakeWaitsForTheProcessToExit`); it never sends a process signal
+(`TestCloseNeverSendsASignal`; do not add `Kill`/`Signal`, and do not use
+`exec.CommandContext`); the restart budget resets only after `Policy.StableFor`
+of uptime, never on a successful handshake (`TestFlappingProcessStillExhausts`,
+`TestStableUptimeResetsTheBudget`); a call in flight is never replayed
+(`TestInFlightCallIsNeverReplayed`). `go-mcp/client`'s reactive stdio transport is
+deliberate and is not to be changed to behave like this package.
 
 ## `_meta` conventions (portfolio-wide)
 

@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added (supervisedstdio)
+
+- New package `supervisedstdio`: one local MCP server as a supervised child
+  process. `Start(ctx, Config)` spawns the command, performs the handshake and
+  leaves a supervisor running that reconnects proactively when the process
+  exits, on a bounded backoff (`supervise.Policy`; the zero Policy is
+  `supervise.DefaultPolicy`, an empty non-nil `Delays` means no restarts).
+  `Connection` offers `Session` (nil while reconnecting), `Status` (state,
+  restarts spent and limit, `NextRetry`, last exit, redacted stderr tail, pid,
+  error), `Ready`, `Done` and `Close`. Config adds `OnConnect` (runs after each
+  handshake, its failure consumes the budget), `OnChange`, `ClientOptions`,
+  `HandshakeTimeout`, `ShutdownTimeout`, `StderrSecrets` and `StderrBytes`; the
+  values of `Env` are redacted from stderr too.
+- The behavior is Tether's proactive loop (internal/mcpadapter's
+  `client_pool.go` and `upstream_stdio.go`) as a single-connection primitive,
+  composing `supervise`. It keeps Tether's rules: a lost transport is not a
+  process exit (no replacement until `Wait` confirms it, and the same after a
+  failed handshake, which Tether's abandon path did not wait for); no process
+  signals (`Close` closes stdin and waits, returning `ErrStillRunning` after
+  `ShutdownTimeout`); startup failures and every kind of exit consume one budget
+  that only `Policy.StableFor` of uptime resets; an in-flight call is never
+  replayed. Not lifted: Tether's multi-server registry, tool aggregation and
+  launch observability handshake.
+- `client`'s stdio transport is unchanged: it stays reactive by design.
+
 ### Documentation
 
 - `AGENTS.md`: new `_meta` conventions (portfolio-wide) section ratifying `_meta`

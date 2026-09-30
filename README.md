@@ -29,6 +29,9 @@ module currently exposes:
   redacted stderr tail
 - `clientguard` — per-key circuit breaking and client-side call-rate
   limiting around a caller's own upstream call, such as `client.Pool.CallTool`
+- `supervisedstdio` — one local MCP server as a supervised child process:
+  spawn, handshake, proactive reconnect on a bounded backoff schedule, exit
+  classification and redacted stderr (`Start`, `Connection`)
 - `skills` — one progressive-discovery "skills" tool for a server: a catalog
   with no argument, one skill's body by name, and a `skill_not_found` tool
   error that points back at the tool (`Register`, `MapSource`, `FSSource`)
@@ -427,7 +430,7 @@ existing caller, but a hand-written interface with the old
 `*Pool` / `*Client`. Pre-1.0: minor releases may change exported API.
 
 `client` is out of scope for: supervised stdio (proactive reconnect, status,
-`OnReconnect`), gateway policy (budgets, visibility, virtual servers), and
+`OnReconnect`; that is package `supervisedstdio`), gateway policy (budgets, visibility, virtual servers), and
 OpenTelemetry. The trace-context carrier is the caller's choice via
 `WithCallMeta`. Note that a `Client` holds its lock for a whole call, so a
 `Pool` serializes calls per server.
@@ -653,6 +656,52 @@ Provenance: the shape is a synthesis of four independent implementations
 (Hadron's `hadron_skills`, Tesseract's `tesseract_skills`, Station's
 `atlas_guide`, Tether's `mux_skill_*`), not a port of any of them; Tether's
 ranked broker and layered discovery are deliberately not part of this package.
+
+## Supervised stdio (`supervisedstdio`)
+
+`github.com/hollis-labs/go-mcp/supervisedstdio` runs one local MCP server as a
+child process and keeps it up: `Start` spawns the command, performs the
+handshake, and leaves a supervisor that reconnects on exit, on a bounded
+backoff (`supervise.Policy`, default five restarts at 1s to 16s), classifying
+each exit and keeping a redacted stderr tail. It is the one-connection primitive
+Tether's per-upstream supervisor was built from; a product with N upstreams runs
+N connections and keeps its own registry. `client`'s stdio transport stays the
+reactive, dial-on-first-use model; this is the proactive one.
+
+```go
+conn, err := supervisedstdio.Start(ctx, supervisedstdio.Config{
+	Command: "my-mcp-server",
+	Args:    []string{"--stdio"},
+	OnConnect: func(ctx context.Context, cs *mcpsdk.ClientSession) error {
+		_, err := cs.ListTools(ctx, nil) // runs after every (re)connect
+		return err
+	},
+})
+if err != nil {
+	return err // an invalid Config; a failing child is reported through conn.Status()
+}
+defer conn.Close()
+
+if sess := conn.Session(); sess != nil { // nil while reconnecting
+	res, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{Name: "echo"})
+	...
+}
+```
+
+The rules it keeps, each with a test: a lost transport is not a process exit
+(no replacement starts until `Wait` confirms the old process exited, also after
+a failed handshake); it never sends a signal (`Close` closes stdin and waits,
+returning `ErrStillRunning` after `ShutdownTimeout` rather than killing a child
+that ignores it); every exit and every startup failure consumes the same
+budget, which only `Policy.StableFor` of continuous uptime resets, so a
+flapping process runs out; and an in-flight call is never replayed, so an error
+from a call made during a crash may mean the outcome is unknown. `Status()`
+reports the state (`starting`, `connected`, `reconnecting`, `failed`,
+`closed`), the restarts spent and `NextRetry`, the last exit and the stderr tail.
+
+Not included: the multi-server registry and tool aggregation, Tether's launch
+observability handshake, HTTP/SSE reconnection (`client` covers those), and
+periodic liveness probes.
 
 ## Client call guard (`clientguard`)
 
