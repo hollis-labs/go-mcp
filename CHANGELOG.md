@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added (server)
+
+- Multi-round-trip tool calls (SEP-2322, protocol 2026-07-28). A handler
+  returns `server.InputRequired{Requests, State}` to ask the client for input
+  (a form or URL elicitation, sampling, roots) before it can finish, and reads
+  the retry's `server.InputResponses(ctx)` and `server.RequestState(ctx)`.
+  `adaptHandler` maps `InputRequired` to an `input_required` result, and
+  passes the retry's responses and state to the handler. The SDK bridges
+  sessions on earlier protocols, so one handler serves both. `RequestState`
+  travels through the client, so verify it before trusting it.
+- `server.ClientCapabilities(ctx)`: the calling client's capabilities, from
+  the request `_meta` on 2026-07-28 and from the session before it. Check it
+  to see whether the client understands an input request (for example
+  `Elicitation.URL`) before sending one.
+
 ## v0.9.0 — 2026-09-29
 
 ### Changed

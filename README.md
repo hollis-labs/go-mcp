@@ -574,6 +574,28 @@ and `ToolDefinition` fields have zero values that reproduce today's behavior.
 Only tools registered through the `Server` are listed by the catalog
 middleware; tools added directly via `SDKServer().AddTool` are not.
 
+### Asking the client mid-call (multi-round-trip)
+
+On protocol 2026-07-28 a server cannot send `elicitation/create` while it is
+serving a tool call. Instead, a handler returns `server.InputRequired`. The
+client fulfills the requests and calls again with the responses:
+
+```go
+Handler: func(ctx context.Context, args map[string]any) (any, error) {
+    if resp, ok := server.InputResponses(ctx)["confirm"].(*mcpsdk.ElicitResult); ok {
+        // the retry: verify server.RequestState(ctx), then act on resp
+    }
+    return server.InputRequired{
+        Requests: mcpsdk.InputRequestMap{"confirm": &mcpsdk.ElicitParams{Message: "Proceed?"}},
+        State:    signedState, // echoed back by the client: sign it
+    }, nil
+},
+```
+
+The SDK bridges clients on earlier protocols, so the same handler works for
+them. URL-mode elicitation (`ElicitParams{Mode: "url", URL: …}`) goes the same
+way to a client that advertises it.
+
 ### Out of scope
 
 Not part of these packages: required-scope enforcement, an error-code
