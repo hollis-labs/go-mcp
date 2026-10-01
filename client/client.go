@@ -99,9 +99,12 @@ func (c *Client) ListTools(ctx context.Context) (*mcpsdk.ListToolsResult, error)
 // don't need this directly -- CallTool and ListTools already run the same
 // lazy health probe internally -- it's exposed for a caller that wants to
 // force a liveness check on its own schedule.
+//
+// A live server that answers the ping with a JSON-RPC error counts as
+// reachable, the same as for the probe (see ping).
 func (c *Client) Ping(ctx context.Context) error {
 	_, _, err := withSession(ctx, c, "ping", RetryDefault, func(sess sdkSession) (struct{}, error) {
-		return struct{}{}, sess.Ping(ctx, &mcpsdk.PingParams{})
+		return struct{}{}, c.ping(ctx, sess)
 	})
 	return err
 }
@@ -159,7 +162,7 @@ func (c *Client) maybeProbeLocked(ctx context.Context) (probed, reconnected bool
 		return false, false, nil
 	}
 
-	pingErr := c.sess.Ping(ctx, &mcpsdk.PingParams{})
+	pingErr := c.ping(ctx, c.sess)
 	if pingErr == nil {
 		c.lastProbe = time.Now().UTC()
 		return true, false, nil
@@ -179,6 +182,21 @@ func (c *Client) maybeProbeLocked(ctx context.Context) (probed, reconnected bool
 		return true, false, fmt.Errorf("reconnect after failed probe: %w", err)
 	}
 	return true, true, nil
+}
+
+// ping is the liveness check behind the health probe and Client.Ping. A
+// JSON-RPC error reply means a live server answered, so it counts as
+// reachable: the official SDK's Ping (v1.8.0) sends no SEP-2575 request
+// _meta, and a stateless server on the 2026-07-28 protocol rejects that
+// bare ping with -32602. Anything IsRecoverableError accepts still fails
+// the check, so an expired session is redialed as before.
+func (c *Client) ping(ctx context.Context, sess sdkSession) error {
+	err := sess.Ping(ctx, &mcpsdk.PingParams{})
+	if err != nil && !IsRecoverableError(err) && serverAnswered(err) {
+		c.logf("ping %q: server answered with an error, treating it as reachable: %v", c.name, err)
+		return nil
+	}
+	return err
 }
 
 func (c *Client) logf(format string, args ...any) {

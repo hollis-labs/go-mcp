@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.14.1 — 2026-10-01
+
+### Fixed (client)
+
+- The lazy health probe no longer marks a live upstream down when it answers
+  ping with a JSON-RPC error. go-sdk v1.8.0's `ClientSession.Ping` omits the
+  SEP-2575 request `_meta` (`io.modelcontextprotocol/protocolVersion`), so a
+  stateless server on the 2026-07-28 protocol, such as tangent, rejects it with
+  -32602; the probe treated that as a failure, closed the connection and failed
+  the call, and the mux proxy dropped the server's tools (CW-20261001-0078,
+  root cause of CW-20261001-0003). A JSON-RPC error reply now counts as
+  reachable, for the probe and for `Client.Ping`. The SDK's own
+  transport-rejection error (a transport failure or a 429/502/503/504, with no
+  reply from the server) and anything `IsRecoverableError` accepts still fail
+  the check as before.
+
 ## v0.14.0 — 2026-09-30
 
 ### Added (supervisedstdio)

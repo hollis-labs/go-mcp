@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -58,4 +59,41 @@ func IsRecoverableError(err error) bool {
 // response as unsent.
 func IsProvablyUnsent(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "client is closing")
+}
+
+// sdkRejectedCode and sdkRejectedMessage identify the official SDK's
+// jsonrpc2.ErrRejected, which is internal and so is matched by value. The
+// streamable HTTP client wraps it around every failed POST so the
+// connection survives: alone for a transport error or a 429/502/503/504,
+// and beside the decoded reply when a non-2xx response carries a JSON-RPC
+// error body. On its own it is the SDK's error, not the server's.
+const (
+	sdkRejectedCode    = -32005
+	sdkRejectedMessage = "rejected by transport"
+)
+
+// serverAnswered reports whether err carries a JSON-RPC error response from
+// the server, meaning the request reached a live peer that replied. The
+// SDK's own closing sentinels never count: it rewraps them as
+// mcpsdk.ErrConnectionClosed with %v, so they leave the error chain.
+func serverAnswered(err error) bool {
+	if err == nil {
+		return false
+	}
+	// A manual walk rather than errors.As, which stops at the first
+	// *jsonrpc.Error: that may be the SDK's rejection, ahead of a reply.
+	if werr, ok := err.(*jsonrpc.Error); ok && (werr.Code != sdkRejectedCode || werr.Message != sdkRejectedMessage) { //nolint:errorlint // see above
+		return true
+	}
+	switch u := err.(type) { //nolint:errorlint // see above
+	case interface{ Unwrap() error }:
+		return serverAnswered(u.Unwrap())
+	case interface{ Unwrap() []error }:
+		for _, e := range u.Unwrap() {
+			if serverAnswered(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
