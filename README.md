@@ -347,6 +347,11 @@ keyset values; token counting beyond the 4-bytes-per-token estimate.
   failure was only the caller's own context ending — an abandoned
   request looks identical to a broken connection from here, and closing
   for it would charge the next caller a reconnect.
+- The health probe and `Client.Ping` count a JSON-RPC error reply to ping
+  as reachable: the server answered. go-sdk v1.8.0 sends ping without the
+  SEP-2575 request `_meta`, which a stateless 2026-07-28 server rejects with
+  -32602. A transport failure, a 429/502/503/504 or a closed connection
+  still fails the check.
 
 `github.com/hollis-labs/go-mcp/transport/http`
 
