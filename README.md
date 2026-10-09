@@ -1,5 +1,22 @@
 # go-mcp
 
+## Maintenance moved to `github.com/hollis-labs/libs/plugin-mcp`
+
+This standalone repository is retired. Maintained source and documentation are
+in [github.com/hollis-labs/libs/plugin-mcp/go-mcp](https://github.com/hollis-labs/libs/tree/plugin-mcp%2Fv0.1.1/plugin-mcp/go-mcp), released in **`plugin-mcp/v0.1.1`**.
+Install the replacement module:
+
+```sh
+go get github.com/hollis-labs/libs/plugin-mcp@v0.1.1
+```
+
+Replace the `github.com/hollis-labs/go-mcp` import prefix with
+`github.com/hollis-labs/libs/plugin-mcp/go-mcp`, retaining the package subpath. Review the replacement documentation
+for any API changes before migrating. Existing standalone tags and history remain
+available; old module pins do not automatically redirect to the new module.
+
+The documentation below describes historical standalone usage.
+
 Shared Go utilities for building [Model Context Protocol](https://modelcontextprotocol.io/)
 tool servers and clients, targeting the 2026-07-28 MCP specification. The
 module currently exposes:
