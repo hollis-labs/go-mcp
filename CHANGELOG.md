@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Pin the CI toolchain to Go 1.26.9, which fixes the reachable standard-library
+  vulnerabilities reported by govulncheck; retain the Go 1.26.6 language floor.
 - Maintained development moved to [github.com/hollis-labs/libs/plugin-mcp/go-mcp](https://github.com/hollis-labs/libs/tree/plugin-mcp%2Fv0.1.1/plugin-mcp/go-mcp) in
   `github.com/hollis-labs/libs/plugin-mcp@v0.1.1` (`plugin-mcp/v0.1.1`).
 - This standalone repository is retired after the replacement release was
